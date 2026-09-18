@@ -15,6 +15,7 @@ enum SelfTest {
     static func runAll() -> [Failure] {
         var f: [Failure] = []
         f += paths()
+        f += config()
         return f
     }
 
@@ -24,6 +25,30 @@ enum SelfTest {
 
     static func equal<T: Equatable>(_ a: T, _ b: T, _ check: String) -> [Failure] {
         expect(a == b, check, "got \(a), expected \(b)")
+    }
+
+    // MARK: - Task 2: Config
+
+    static func config() -> [Failure] {
+        let saved = Config.url
+        defer { Config.url = saved }
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-\(UUID()).json")
+        Config.url = tmp
+        var c = Config.load()
+        var f: [Failure] = []
+        f += equal(c.language, "en", "config.defaultLanguage")
+        f += expect(c.glossary.contains("Blaxify"), "config.glossary", "glossary missing Blaxify")
+        f += equal(c.minCallSeconds, 8, "config.minCallSeconds")
+        f += equal(c.triggerBundleIDs, ["com.apple.avconferenced"], "config.triggerBundleIDs")
+        do {
+            c.language = "auto"
+            try c.save()
+            f += equal(Config.load().language, "auto", "config.roundTrip")
+        } catch {
+            f += [Failure(check: "config.save", detail: "\(error)")]
+        }
+        try? FileManager.default.removeItem(at: tmp)
+        return f
     }
 
     // MARK: - Task 1: Paths
