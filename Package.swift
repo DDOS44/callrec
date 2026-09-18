@@ -1,5 +1,9 @@
 // swift-tools-version:5.9
 import PackageDescription
+import Foundation
+
+let frameworksPath = "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
+let testingLibPath = "/Library/Developer/CommandLineTools/Library/Developer/usr/lib"
 
 let package = Package(
     name: "callrec",
@@ -22,6 +26,15 @@ let package = Package(
                     "-Xlinker", "Sources/callrec/Info.plist"
                 ])
             ]
+        ),
+        .testTarget(
+            name: "callrecTests",
+            dependencies: ["callrec"],
+            path: "Tests/callrecTests",
+            // This Mac has Command Line Tools but no Xcode, so XCTest is absent
+            // and swift-testing's framework is not on the default search path.
+            swiftSettings: [.unsafeFlags(["-F", frameworksPath])],
+            linkerSettings: [.unsafeFlags(["-F", frameworksPath, "-Xlinker", "-rpath", "-Xlinker", frameworksPath, "-Xlinker", "-rpath", "-Xlinker", testingLibPath])]
         )
     ]
 )

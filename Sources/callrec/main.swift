@@ -77,6 +77,16 @@ case "tap-test":
         exit(1)
     }
 
+case "selftest":
+    let failures = SelfTest.runAll()
+    if failures.isEmpty {
+        print("selftest: all checks passed")
+    } else {
+        failures.forEach { print($0) }
+        print("selftest: \(failures.count) failure(s)")
+        exit(1)
+    }
+
 default:
     usage()
 }
