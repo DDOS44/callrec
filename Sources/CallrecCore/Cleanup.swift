@@ -31,8 +31,19 @@ public enum Cleanup {
     ///
     /// Anything that does not line up one-for-one is discarded in favour of the
     /// raw text: a cleanup pass must never lose or invent a line.
+    /// llama.cpp prints its own end markers into stdout; they are not transcript.
+    static let endMarkers = ["[end of text]", "<|im_end|>", "</s>", "[end]"]
+
+    static func stripMarkers(_ text: String) -> String {
+        var out = text
+        for marker in endMarkers {
+            out = out.replacingOccurrences(of: marker, with: "", options: .caseInsensitive)
+        }
+        return out.trimmingCharacters(in: .whitespaces)
+    }
+
     public static func parse(_ reply: String, original: [Segment]) -> [Segment] {
-        let lines = reply.components(separatedBy: "\n")
+        let lines = stripMarkers(reply).components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { $0.hasPrefix("[") }
         guard lines.count == original.count else { return original }
@@ -43,7 +54,7 @@ public enum Cleanup {
             guard stamp == String(format: "%02d:%02d", Int(segment.start) / 60, Int(segment.start) % 60) else {
                 return segment
             }
-            var text = String(line[line.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+            var text = stripMarkers(String(line[line.index(after: close)...]))
             for speaker in [Speaker.me, .them] {
                 for prefix in ["**\(speaker.label):**", "\(speaker.label):"] where text.hasPrefix(prefix) {
                     text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)

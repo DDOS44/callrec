@@ -6,7 +6,10 @@ import Foundation
 public enum Announcements {
 
     public static let defaultPhrases = [
-        "scammer", "spam", "fraud call",
+        // Whisper spells the warning phonetically, so the variants matter more
+        // than the correct spelling.
+        "scammer", "scam", "skaim", "skaimar", "sakaim", "spam", "fraud call",
+        "agla call", "agala call",
         "call record", "record kiya ja raha",
         "the number you have dialled", "number you have dialed",
         "is not reachable", "switched off", "currently busy",

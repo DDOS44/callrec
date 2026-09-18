@@ -44,6 +44,8 @@ enum SelfTest {
     public static func announcements() -> [Failure] {
         var f: [Failure] = []
         f += expect(Announcements.isOperator("agla call scammer ho sakta hai"), "ann.scammer", "missed scammer warning")
+        // Whisper writes it phonetically; that spelling must match too.
+        f += expect(Announcements.isOperator("ki agala call skaim hai"), "ann.phoneticScam", "missed the phonetic spelling")
         f += expect(Announcements.isOperator("yeh call spam ho sakti hai"), "ann.spam", "missed spam warning")
         f += expect(Announcements.isOperator("This call may be SPAM."), "ann.caseAndPunctuation", "case or punctuation broke the match")
         f += expect(Announcements.isOperator("aapka call record kiya ja raha hai"), "ann.recording", "missed recording warning")
@@ -101,6 +103,9 @@ enum SelfTest {
         f += equal(mixed[0].text, original[0].text, "cleanup.badTimestampKeepsRaw")
         f += equal(mixed[1].text, "b", "cleanup.goodLineStillUsed")
         f += equal(Cleanup.parse("", original: original), original, "cleanup.emptyReply")
+        // llama.cpp appends its own end marker; it must not reach the transcript.
+        let marked = "[00:00] Them: Hello ji.\n[01:05] Me: Do hazaar. [end of text]"
+        f += equal(Cleanup.parse(marked, original: original)[1].text, "Do hazaar.", "cleanup.endMarkerStripped")
         f += equal(Cleanup.parse("[00:00] Them:\n[01:05] Me: b", original: original)[0].text,
                    original[0].text, "cleanup.emptyLineKeepsRaw")
         return f
