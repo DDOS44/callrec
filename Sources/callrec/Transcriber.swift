@@ -17,7 +17,7 @@ enum Transcriber {
             "-m", config.modelURL.path,
             "-f", wav.path,
             "-l", config.language,
-            "--prompt", config.glossary.joined(separator: ", "),
+            "--prompt", config.prompt,
             "-otxt", "-osrt", "-of", base, "-nt", "-t", "4"
         ], timeout: 1800)
 

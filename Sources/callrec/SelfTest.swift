@@ -150,8 +150,9 @@ enum SelfTest {
         Config.url = tmp
         var c = Config.load()
         var f: [Failure] = []
-        f += equal(c.language, "en", "config.defaultLanguage")
-        f += expect(c.glossary.contains("Blaxify"), "config.glossary", "glossary missing Blaxify")
+        f += equal(c.language, "hi", "config.defaultLanguage")
+        f += expect(c.prompt.contains("Blaxify"), "config.prompt", "prompt missing Blaxify")
+        f += expect(c.prompt.contains("Haan ji"), "config.promptHinglish", "prompt is not Roman Hinglish")
         f += equal(c.minCallSeconds, 8, "config.minCallSeconds")
         f += equal(c.triggerBundleIDs, ["com.apple.avconferenced"], "config.triggerBundleIDs")
         do {

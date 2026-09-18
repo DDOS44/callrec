@@ -3,10 +3,10 @@ import Foundation
 struct Config: Codable {
     var recordingsDir = "~/CallRecordings"
     var modelPath = "~/.callrec/models/ggml-large-v3-turbo.bin"
-    var language = "en"            // whisper -l; "auto" allowed
-    var glossary = ["Blaxify", "Devansh", "Anurag", "recruitment", "closures", "joinings",
-                    "CTC", "requirement", "outreach", "AI cold outreach",
-                    "haan ji", "boliye", "theek hai", "bas", "dijiye"]
+    // "hi" plus a Roman-script Hinglish prompt is what produces readable Roman
+    // Hinglish. "en" and "auto" translate the call into mangled English.
+    var language = "hi"
+    var prompt = "Haan ji, boliye. Theek hai. Devansh Blaxify se bol raha hoon. Hum recruitment agencies ko naye clients dilate hain, AI cold outreach se. Closures, joinings, CTC, requirement, outreach, meeting, Thursday ya Friday. Kya haal hai bhai."
     // Task 0 spike: com.apple.avconferenced is the process that goes live
     // exactly when a Continuity call connects.
     var triggerBundleIDs = ["com.apple.avconferenced"]
