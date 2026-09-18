@@ -44,7 +44,8 @@ public final class CallRecorder: @unchecked Sendable {
             log(String(format: "device changed to %.0f Hz mid-call, converter updated", newFormat.mSampleRate))
             writer?.setSource(newFormat)
         }
-        try tap.start { abl, frames in writer.write(abl, frames: frames) }
+        writer.markStart()
+        try tap.start { abl, frames, host in writer.write(abl, frames: frames, hostTime: host) }
         self.tap = tap
         self.writer = writer
 
@@ -59,8 +60,13 @@ public final class CallRecorder: @unchecked Sendable {
         guard !stopped else { return RecordingResult(paths: paths, seconds: 0, kept: false) }
         stopped = true
 
+        // Pad both tracks to the same stop time so they line up without ffmpeg
+        // having to stretch anything.
+        tap?.stop()
+        writer?.padToWallClock()
         farSeconds = writer?.secondsWritten
-        tap?.stop(); writer?.close(); mic?.stop()
+        writer?.close()
+        mic?.stop()
         tap = nil; writer = nil; mic = nil
 
         let seconds = Date().timeIntervalSince(startedAt)
@@ -83,7 +89,7 @@ public final class CallRecorder: @unchecked Sendable {
         let mix = try Shell.run(ffmpeg, [
             "-y", "-i", paths.farWav.path, "-i", paths.micWav.path,
             // The tap file is already 16 kHz mono; the mic is at its own rate.
-            "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0,aresample=16000",
+            "-filter_complex", "[0:a][1:a]amix=inputs=2:normalize=0,aresample=16000",
             "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", paths.mixWav.path
         ])
         guard mix.status == 0 else {

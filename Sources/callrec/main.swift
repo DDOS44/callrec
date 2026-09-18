@@ -53,8 +53,9 @@ case "tap-test":
         }
 
         let meter = RMSMeter()
-        try tap.start { abl, frames in
-            writer.write(abl, frames: frames)
+        writer.markStart()
+        try tap.start { abl, frames, host in
+            writer.write(abl, frames: frames, hostTime: host)
             meter.accumulate(abl, frames: frames, format: fmt)
         }
         print("Recording 20 s to \(outURL.path). RMS once per second:")
@@ -71,6 +72,7 @@ case "tap-test":
             }
         }
         tap.stop()
+        writer.padToWallClock()
         writer.close()
         print("Wrote \(outURL.path)")
         if !sawAudio {

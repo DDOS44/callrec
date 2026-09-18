@@ -143,13 +143,18 @@ public final class ProcessTap: @unchecked Sendable {
     }
 
     /// onBuffer is called on a real-time audio thread. Keep it fast and allocation-free.
-    public func start(onBuffer: @escaping (UnsafePointer<AudioBufferList>, UInt32) -> Void) throws {
+    /// `onBuffer` receives the buffer, its frame count, and the host time the
+    /// audio was captured, which is what keeps the file on the wall clock.
+    public func start(onBuffer: @escaping (UnsafePointer<AudioBufferList>, UInt32, UInt64) -> Void) throws {
         guard !started else { return }
         let bytesPerFrame = max(format.mBytesPerFrame, 1)
         var newProcID: AudioDeviceIOProcID?
-        let status = AudioDeviceCreateIOProcIDWithBlock(&newProcID, aggregateID, queue) { _, inInputData, _, _, _ in
+        let status = AudioDeviceCreateIOProcIDWithBlock(&newProcID, aggregateID, queue) { _, inInputData, inInputTime, _, _ in
             let frames = inInputData.pointee.mBuffers.mDataByteSize / bytesPerFrame
-            if frames > 0 { onBuffer(inInputData, frames) }
+            guard frames > 0 else { return }
+            let stamp = inInputTime.pointee
+            let host = (stamp.mFlags.contains(.hostTimeValid) && stamp.mHostTime > 0) ? stamp.mHostTime : Clock.nowHost
+            onBuffer(inInputData, frames, host)
         }
         try AudioProcessWatcher.check(status)
         procID = newProcID

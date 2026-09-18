@@ -9,6 +9,9 @@ public final class MicRecorder: @unchecked Sendable {
     private var converter: AVAudioConverter?
     private var monoFormat: AVAudioFormat?
     private var running = false
+    private var startHost: UInt64 = 0
+    private var framesWritten: Int64 = 0
+    private var writeFormat: AVAudioFormat?
 
     public init(url: URL) throws {
         self.url = url
@@ -46,7 +49,9 @@ public final class MicRecorder: @unchecked Sendable {
         input.installTap(onBus: 0, bufferSize: 4096, format: fmt) { [weak self] buf, _ in
             guard let self, let file = self.file else { return }
             do {
-                try file.write(from: self.downmix(buf) ?? buf)
+                let out = self.downmix(buf) ?? buf
+                self.framesWritten += Int64(out.frameLength)
+                try file.write(from: out)
             } catch {
                 FileHandle.standardError.write("mic write failed: \(error.localizedDescription)\n".data(using: .utf8)!)
             }
@@ -54,6 +59,8 @@ public final class MicRecorder: @unchecked Sendable {
 
         engine.prepare()
         try engine.start()
+        writeFormat = monoFormat ?? fmt
+        startHost = Clock.nowHost
         running = true
     }
 
@@ -75,8 +82,33 @@ public final class MicRecorder: @unchecked Sendable {
         guard running else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        padToWallClock()
         file = nil
         running = false
+    }
+
+    /// Matches the far-side track: fill to the stop time so both files are the
+    /// same length and mix without any alignment step.
+    private func padToWallClock() {
+        guard let file, let format = writeFormat else { return }
+        let pad = Clock.framesToPad(writtenFrames: framesWritten, startHost: startHost,
+                                    bufferHost: Clock.nowHost, rate: format.sampleRate)
+        guard pad > 0 else { return }
+        let chunk = AVAudioFrameCount(min(pad, Int64(format.sampleRate)))
+        guard let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else { return }
+        var remaining = pad
+        while remaining > 0 {
+            let n = AVAudioFrameCount(min(remaining, Int64(chunk)))
+            silence.frameLength = n
+            for channel in 0..<Int(format.channelCount) {
+                if let data = silence.floatChannelData?[channel] {
+                    memset(data, 0, Int(n) * MemoryLayout<Float>.size)
+                }
+            }
+            try? file.write(from: silence)
+            framesWritten += Int64(n)
+            remaining -= Int64(n)
+        }
     }
 
     deinit { stop() }

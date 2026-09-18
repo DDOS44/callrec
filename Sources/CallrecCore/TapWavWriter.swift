@@ -18,6 +18,8 @@ public final class TapWavWriter: @unchecked Sendable {
     private var sourceFormat: AVAudioFormat?
     private let outputFormat: AVAudioFormat
     private(set) var framesWritten: Int64 = 0
+    /// Host time the recording started, so gaps can be filled with silence.
+    private var startHost: UInt64 = Clock.nowHost
 
     public init(url: URL, sourceFormat source: AudioStreamBasicDescription) throws {
         guard let out = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: TapWavWriter.targetRate,
@@ -55,8 +57,41 @@ public final class TapWavWriter: @unchecked Sendable {
         converter?.sampleRateConverterQuality = AVAudioQuality.high.rawValue
     }
 
-    public func write(_ abl: UnsafePointer<AudioBufferList>, frames: UInt32) {
+    /// Call once when the tap actually starts.
+    public func markStart(host: UInt64 = Clock.nowHost) {
         lock.lock(); defer { lock.unlock() }
+        startHost = host
+    }
+
+    /// Fills the file with silence up to `host` (used at stop, so the far and
+    /// mic tracks end at the same length).
+    public func padToWallClock(host: UInt64 = Clock.nowHost) {
+        lock.lock(); defer { lock.unlock() }
+        padLocked(to: host)
+    }
+
+    private func padLocked(to host: UInt64) {
+        let pad = Clock.framesToPad(writtenFrames: framesWritten, startHost: startHost,
+                                    bufferHost: host, rate: TapWavWriter.targetRate)
+        guard pad > 0, let ref else { return }
+        let chunk = AVAudioFrameCount(min(pad, 16_000))
+        guard let silence = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: chunk) else { return }
+        var remaining = pad
+        while remaining > 0 {
+            let n = AVAudioFrameCount(min(remaining, Int64(chunk)))
+            silence.frameLength = n
+            if let data = silence.floatChannelData?[0] {
+                memset(data, 0, Int(n) * MemoryLayout<Float>.size)
+            }
+            if ExtAudioFileWrite(ref, n, silence.audioBufferList) != noErr { return }
+            framesWritten += Int64(n)
+            remaining -= Int64(n)
+        }
+    }
+
+    public func write(_ abl: UnsafePointer<AudioBufferList>, frames: UInt32, hostTime: UInt64) {
+        lock.lock(); defer { lock.unlock() }
+        padLocked(to: hostTime)
         guard let ref, let converter, let sourceFormat,
               let input = AVAudioPCMBuffer(pcmFormat: sourceFormat,
                                            bufferListNoCopy: abl,
