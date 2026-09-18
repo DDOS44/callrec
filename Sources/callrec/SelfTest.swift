@@ -26,6 +26,8 @@ enum SelfTest {
         f += speakerMerge()
         f += callIdentity()
         f += transliteration()
+        f += announcements()
+        f += cleanupParsing()
         return f
     }
 
@@ -35,6 +37,73 @@ enum SelfTest {
 
     static func equal<T: Equatable>(_ a: T, _ b: T, _ check: String) -> [Failure] {
         expect(a == b, check, "got \(a), expected \(b)")
+    }
+
+    // MARK: - Operator announcements
+
+    public static func announcements() -> [Failure] {
+        var f: [Failure] = []
+        f += expect(Announcements.isOperator("agla call scammer ho sakta hai"), "ann.scammer", "missed scammer warning")
+        f += expect(Announcements.isOperator("yeh call spam ho sakti hai"), "ann.spam", "missed spam warning")
+        f += expect(Announcements.isOperator("This call may be SPAM."), "ann.caseAndPunctuation", "case or punctuation broke the match")
+        f += expect(Announcements.isOperator("aapka call record kiya ja raha hai"), "ann.recording", "missed recording warning")
+        f += expect(Announcements.isOperator("the number you have dialled is not reachable"), "ann.unreachable", "missed unreachable message")
+        f += expect(!Announcements.isOperator("haan ji boliye, main Devansh bol raha hoon"), "ann.realSpeech", "dropped real speech")
+        f += expect(!Announcements.isOperator(""), "ann.empty", "empty text matched")
+
+        // Only the far side, only at the start of the call.
+        let segments = [
+            Segment(start: 1, end: 4, text: "agla call scammer ho sakta hai", speaker: .them),
+            Segment(start: 6, end: 9, text: "haan ji boliye", speaker: .them),
+            Segment(start: 40, end: 44, text: "spam call ke baare mein baat kar rahe the", speaker: .them),
+            Segment(start: 3, end: 5, text: "this call may be spam", speaker: .me)
+        ]
+        let kept = Announcements.strip(segments)
+        f += equal(kept.count, 3, "ann.strippedOne")
+        f += expect(!kept.contains { $0.text.contains("agla call") }, "ann.warningGone", "warning survived")
+        f += expect(kept.contains { $0.start == 40 }, "ann.lateMentionKept", "a later mention of spam was dropped")
+        f += expect(kept.contains { $0.speaker == .me }, "ann.myWordsKept", "my own line was dropped")
+
+        // The phrase list is configurable.
+        f += expect(Announcements.isOperator("please recharge your account", phrases: ["recharge your account"]),
+                    "ann.customPhrase", "custom phrase not matched")
+        return f
+    }
+
+    // MARK: - LLM cleanup plumbing
+
+    public static func cleanupParsing() -> [Failure] {
+        var f: [Failure] = []
+        let original = [
+            Segment(start: 0, end: 3, text: "elo hai elo hai main kah raha hoon", speaker: .them),
+            Segment(start: 65, end: 68, text: "dohajaar bank mein daala tha", speaker: .me)
+        ]
+
+        f += equal(Cleanup.render(original),
+                   "[00:00] Them: elo hai elo hai main kah raha hoon\n[01:05] Me: dohajaar bank mein daala tha",
+                   "cleanup.render")
+
+        let good = "[00:00] Them: Hello, main kah raha hoon.\n[01:05] Me: Do hazaar bank mein daala tha."
+        let parsed = Cleanup.parse(good, original: original)
+        f += equal(parsed.count, 2, "cleanup.parsedCount")
+        f += equal(parsed[0].text, "Hello, main kah raha hoon.", "cleanup.parsedText")
+        f += equal(parsed[0].speaker, .them, "cleanup.speakerKept")
+        f += equal(parsed[1].start, 65, "cleanup.startKept")
+
+        // Bold labels and chatty preambles must not break it.
+        let bold = "Here you go:\n[00:00] **Them:** Hello ji.\n[01:05] **Me:** Do hazaar."
+        f += equal(Cleanup.parse(bold, original: original)[0].text, "Hello ji.", "cleanup.boldLabels")
+
+        // Anything that does not line up falls back to the raw text.
+        f += equal(Cleanup.parse("[00:00] Them: only one line", original: original), original, "cleanup.wrongLineCount")
+        // A garbled timestamp only loses that one line; the rest is still used.
+        let mixed = Cleanup.parse("[09:99] Them: a\n[01:05] Me: b", original: original)
+        f += equal(mixed[0].text, original[0].text, "cleanup.badTimestampKeepsRaw")
+        f += equal(mixed[1].text, "b", "cleanup.goodLineStillUsed")
+        f += equal(Cleanup.parse("", original: original), original, "cleanup.emptyReply")
+        f += equal(Cleanup.parse("[00:00] Them:\n[01:05] Me: b", original: original)[0].text,
+                   original[0].text, "cleanup.emptyLineKeepsRaw")
+        return f
     }
 
     // MARK: - Devanagari to Roman
@@ -285,6 +354,20 @@ enum SelfTest {
         f += equal(m.poll(callActive: false), .none, "watcher.inactive2")
         f += equal(m.poll(callActive: false), .stopRecording, "watcher.inactive3Stops")
         f += equal(m.state, .idle, "watcher.stateAfterStop")
+
+        // Once the call has settled, a short quiet stretch ends it: no more
+        // seconds of dead air after the hang-up.
+        var q = WatcherStateMachine(stopAfterSilentPolls: 6, settledAfterPolls: 10, settledStopPolls: 2)
+        f += equal(q.poll(callActive: true), .startRecording, "watcher.settled.start")
+        f += equal(q.patience, 6, "watcher.settled.earlyPatience")
+        for _ in 0..<12 { _ = q.poll(callActive: true) }
+        f += equal(q.patience, 2, "watcher.settled.latePatience")
+        f += equal(q.poll(callActive: false), .none, "watcher.settled.firstQuiet")
+        f += equal(q.poll(callActive: false), .stopRecording, "watcher.settled.stopsFast")
+        // The connect blip inside the first ten polls must not end the call.
+        var b2 = WatcherStateMachine(stopAfterSilentPolls: 6, settledAfterPolls: 10, settledStopPolls: 2)
+        _ = b2.poll(callActive: true)
+        for _ in 0..<5 { f += equal(b2.poll(callActive: false), .none, "watcher.settled.connectBlipTolerated") }
 
         // A blip of inactivity mid-call must not end the recording.
         var b = WatcherStateMachine(stopAfterSilentPolls: 3)

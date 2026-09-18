@@ -25,7 +25,8 @@ final class Watcher {
 
     init(config: Config) {
         self.config = config
-        self.machine = WatcherStateMachine(stopAfterSilentPolls: config.stopAfterSilentSeconds)
+        self.machine = WatcherStateMachine(stopAfterSilentPolls: config.stopAfterSilentSeconds,
+                                           settledAfterPolls: 10, settledStopPolls: 2)
     }
 
     func run() -> Never {

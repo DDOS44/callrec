@@ -25,7 +25,8 @@ public struct Segment {
 }
 
 public enum Markdown {
-    public static func render(date: Date, seconds: Double, audioName: String, segments: [Segment]) -> String {
+    public static func render(date: Date, seconds: Double, audioName: String,
+                              segments: [Segment], raw: [Segment] = []) -> String {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm"
         let m = Int(seconds) / 60, s = Int(seconds) % 60
         var out = "# Call \(f.string(from: date))\n\n"
@@ -42,6 +43,16 @@ public enum Markdown {
             }
         }
         out += "\n## Notes\n\n- what they said that wasn't in the flow: \n"
+        // The unedited speech-to-text is kept so the cleanup can always be checked.
+        if !raw.isEmpty, raw.map(\.text) != segments.map(\.text) {
+            out += "\n## Raw transcript\n\n"
+            for seg in raw {
+                let mm = Int(seg.start) / 60, ss = Int(seg.start) % 60
+                let stamp = String(format: "%02d:%02d", mm, ss)
+                let text = seg.text.trimmingCharacters(in: .whitespaces)
+                out += seg.speaker == .unknown ? "[\(stamp)] \(text)\n" : "[\(stamp)] **\(seg.speaker.label):** \(text)\n"
+            }
+        }
         return out
     }
 }

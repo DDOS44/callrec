@@ -17,6 +17,7 @@ struct Call: Identifiable, Hashable {
     var notes: String
     var preview: String
     var transcript: [TranscriptLine]
+    var rawTranscript: [TranscriptLine]
 
     /// What the row leads with: the company, else the contact, else the number,
     /// else just the time.
@@ -134,6 +135,9 @@ enum Library {
             notes: fields.notes,
             preview: preview(for: MarkdownFields.segments(md: md), md: md),
             transcript: MarkdownFields.segments(md: md).map {
+                TranscriptLine(start: $0.start, text: $0.text, speaker: $0.speaker)
+            },
+            rawTranscript: MarkdownFields.rawTranscript(md: md).map {
                 TranscriptLine(start: $0.start, text: $0.text, speaker: $0.speaker)
             }
         )

@@ -7,7 +7,7 @@ setvbuf(stdout, nil, _IOLBF, 0)
 let args = Array(CommandLine.arguments.dropFirst())
 
 func usage() -> Never {
-    print("usage: callrec <watch|status|record|session|transcribe|retranscribe|relabel|install-agent|uninstall-agent|probe|tap-test|mic-test|selftest>")
+    print("usage: callrec <watch|status|record|session|transcribe|retranscribe|cleanup|relabel|install-agent|uninstall-agent|probe|tap-test|mic-test|selftest>")
     exit(2)
 }
 
@@ -87,6 +87,10 @@ case "tap-test":
 case "retranscribe":
     let result = Transcriber.retranscribe(target: args.count > 1 ? args[1] : nil, config: Config.load())
     print("Re-transcribed \(result.done) call(s), skipped \(result.skipped).")
+
+case "cleanup":
+    let cleaned = Transcriber.cleanupOnly(target: args.count > 1 ? args[1] : nil, config: Config.load())
+    print("Cleaned \(cleaned.done) transcript(s), skipped \(cleaned.skipped).")
 
 case "relabel":
     let config = Config.load()

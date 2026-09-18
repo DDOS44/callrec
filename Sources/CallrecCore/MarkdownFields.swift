@@ -121,6 +121,42 @@ public enum MarkdownFields {
         return lines.joined(separator: "\n")
     }
 
+    /// Segments under a named "## " heading.
+    public static func segments(md: String, section: String) -> [Segment] {
+        var slice: [String] = []
+        var inSection = false
+        for line in md.components(separatedBy: "\n") {
+            if line.hasPrefix("## ") {
+                inSection = line.hasPrefix("## " + section)
+                continue
+            }
+            if inSection { slice.append(line) }
+        }
+        return segments(md: "## Transcript\n" + slice.joined(separator: "\n"))
+    }
+
+    public static func rawTranscript(md: String) -> [Segment] {
+        segments(md: md, section: "Raw transcript")
+    }
+
+    /// Replaces the transcript and the raw transcript together.
+    public static func replaceTranscript(md: String, with segments: [Segment], raw: [Segment]) -> String {
+        var out = replaceTranscript(md: md, with: segments)
+        var lines = out.components(separatedBy: "\n")
+        if let start = lines.firstIndex(where: { $0.hasPrefix("## Raw transcript") }) {
+            lines.removeSubrange(start...)
+            out = lines.joined(separator: "\n")
+        }
+        guard !raw.isEmpty, raw.map(\.text) != segments.map(\.text) else { return out }
+        var body = out.trimmingCharacters(in: .whitespaces) + "\n\n## Raw transcript\n\n"
+        for seg in raw {
+            let stamp = String(format: "%02d:%02d", Int(seg.start) / 60, Int(seg.start) % 60)
+            let text = seg.text.trimmingCharacters(in: .whitespaces)
+            body += seg.speaker == .unknown ? "[\(stamp)] \(text)\n" : "[\(stamp)] **\(seg.speaker.label):** \(text)\n"
+        }
+        return body
+    }
+
     /// The first transcript line, for the call list preview.
     public static func firstTranscriptLine(md: String) -> String {
         var inTranscript = false

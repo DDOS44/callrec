@@ -2,7 +2,12 @@ import Foundation
 
 public struct Config: Codable {
     public var recordingsDir = "~/CallRecordings"
-    public var modelPath = "~/.callrec/models/ggml-large-v3-turbo.bin"
+    public var modelPath = "~/.callrec/models/ggml-large-v3.bin"
+    /// Used when the big model is not downloaded.
+    public var fallbackModelPath = "~/.callrec/models/ggml-large-v3-turbo.bin"
+    public var cleanup = true
+    public var cleanupModelPath = "~/.callrec/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+    public var announcementPhrases = Announcements.defaultPhrases
     // "hi" plus a Roman-script Hinglish prompt is what produces readable Roman
     // Hinglish. "en" and "auto" translate the call into mangled English.
     public var language = "hi"
@@ -35,5 +40,17 @@ public struct Config: Codable {
 
     public var recordingsURL: URL { URL(fileURLWithPath: (recordingsDir as NSString).expandingTildeInPath) }
     public var leadsURL: URL { URL(fileURLWithPath: (leadsCSV as NSString).expandingTildeInPath) }
-    public var modelURL: URL { URL(fileURLWithPath: (modelPath as NSString).expandingTildeInPath) }
+    public var cleanupModelURL: URL { URL(fileURLWithPath: (cleanupModelPath as NSString).expandingTildeInPath) }
+
+    /// The big model when it is there, the turbo fallback when it is not.
+    public var modelURL: URL {
+        let big = URL(fileURLWithPath: (modelPath as NSString).expandingTildeInPath)
+        if FileManager.default.fileExists(atPath: big.path) { return big }
+        let fallback = URL(fileURLWithPath: (fallbackModelPath as NSString).expandingTildeInPath)
+        if FileManager.default.fileExists(atPath: fallback.path) {
+            print("[callrec] \(big.lastPathComponent) not found, using \(fallback.lastPathComponent)")
+            return fallback
+        }
+        return big
+    }
 }

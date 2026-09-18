@@ -87,8 +87,12 @@ public enum Transcriber {
         } else {
             segments = try transcribe(wav: paths.mixWav, config: config)
         }
+
+        segments = Announcements.strip(segments, phrases: config.announcementPhrases)
+        let raw = segments
+        segments = Cleanup.run(segments: segments, config: config)
         let md = Markdown.render(date: date, seconds: seconds,
-                                 audioName: paths.m4a.lastPathComponent, segments: segments)
+                                 audioName: paths.m4a.lastPathComponent, segments: segments, raw: raw)
         try md.write(to: paths.md, atomically: true, encoding: .utf8)
         let identity = Identify.apply(to: paths.md, callDate: date, config: config)
         if identity.isEmpty, !CallHistory.readable {
@@ -156,11 +160,55 @@ public enum Transcriber {
                     continue
                 }
 
-                let updated = MarkdownFields.replaceTranscript(md: existing, with: segments)
+                segments = Announcements.strip(segments, phrases: config.announcementPhrases)
+                let raw = segments
+                segments = Cleanup.run(segments: segments, config: config)
+                let updated = MarkdownFields.replaceTranscript(md: existing, with: segments, raw: raw)
                 try? updated.write(to: paths.md, atomically: true, encoding: .utf8)
                 _ = stamp.date(from: "\(day) \(base)")
                 done += 1
                 print("[callrec] re-transcribed \(day)/\(base) (\(segments.count) segments)")
+            }
+        }
+        return (done, skipped)
+    }
+
+    /// Re-runs only the language-model cleanup over transcripts already on disk.
+    public static func cleanupOnly(target: String?, config: Config) -> (done: Int, skipped: Int) {
+        let fm = FileManager.default
+        let root = config.recordingsURL
+        var done = 0, skipped = 0
+
+        var days = ((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).filter { $0.count == 10 }
+        var onlyCall: String? = nil
+        if let target, target.contains("/") {
+            let parts = target.components(separatedBy: "/")
+            days = [parts[0]]; onlyCall = parts[1]
+        } else if let target, target.count == 10 {
+            days = [target]
+        } else if let target {
+            onlyCall = target
+        }
+
+        for day in days.sorted() {
+            let dir = root.appendingPathComponent(day)
+            for file in ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).filter({ $0.hasSuffix(".md") }).sorted() {
+                let base = String(file.dropLast(3))
+                if let onlyCall, base != onlyCall { continue }
+                let url = dir.appendingPathComponent(file)
+                guard let existing = try? String(contentsOf: url, encoding: .utf8) else { skipped += 1; continue }
+                // Clean the original speech-to-text, not an already-cleaned copy.
+                let stored = MarkdownFields.rawTranscript(md: existing)
+                let source = stored.isEmpty ? MarkdownFields.segments(md: existing) : stored
+                guard !source.isEmpty else { skipped += 1; continue }
+
+                let stripped = Announcements.strip(source, phrases: config.announcementPhrases)
+                let cleaned = Cleanup.run(segments: stripped, config: config)
+                guard cleaned.map(\.text) != MarkdownFields.segments(md: existing).map(\.text) else { skipped += 1; continue }
+                let updated = MarkdownFields.replaceTranscript(md: existing, with: cleaned, raw: stripped)
+                try? updated.write(to: url, atomically: true, encoding: .utf8)
+                done += 1
+                print("[callrec] cleaned \(day)/\(base)")
             }
         }
         return (done, skipped)

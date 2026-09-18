@@ -1,3 +1,4 @@
+import AVFoundation
 import AudioToolbox
 import Foundation
 
@@ -56,6 +57,39 @@ public final class CallRecorder: @unchecked Sendable {
 
     private var farSeconds: Double?
 
+    /// Cuts trailing silence off the mix, then cuts the two tracks to the same
+    /// length. Returns the new duration.
+    private func trimTrailingSilence(ffmpeg: String, paths: RecordingPaths) -> Double? {
+        let filter = "silenceremove=stop_periods=1:stop_duration=0.7:stop_threshold=-45dB"
+        let tmp = paths.mixWav.deletingPathExtension().appendingPathExtension("trim.wav")
+        guard let r = try? Shell.run(ffmpeg, ["-y", "-i", paths.mixWav.path, "-af", filter,
+                                              "-c:a", "pcm_s16le", tmp.path]), r.status == 0,
+              let duration = wavSeconds(tmp), duration > 1 else {
+            try? FileManager.default.removeItem(at: tmp)
+            return nil
+        }
+        try? FileManager.default.removeItem(at: paths.mixWav)
+        try? FileManager.default.moveItem(at: tmp, to: paths.mixWav)
+
+        for track in [paths.farWav, paths.micWav] {
+            guard FileManager.default.fileExists(atPath: track.path) else { continue }
+            let cut = track.deletingPathExtension().appendingPathExtension("cut.wav")
+            guard let c = try? Shell.run(ffmpeg, ["-y", "-i", track.path, "-t", "\(duration)",
+                                                  "-c:a", "pcm_s16le", cut.path]), c.status == 0 else {
+                try? FileManager.default.removeItem(at: cut)
+                continue
+            }
+            try? FileManager.default.removeItem(at: track)
+            try? FileManager.default.moveItem(at: cut, to: track)
+        }
+        return duration
+    }
+
+    private func wavSeconds(_ url: URL) -> Double? {
+        guard let file = try? AVAudioFile(forReading: url), file.fileFormat.sampleRate > 0 else { return nil }
+        return Double(file.length) / file.fileFormat.sampleRate
+    }
+
     public func stop() throws -> RecordingResult {
         guard !stopped else { return RecordingResult(paths: paths, seconds: 0, kept: false) }
         stopped = true
@@ -97,6 +131,10 @@ public final class CallRecorder: @unchecked Sendable {
                 "ffmpeg could not merge the two recordings.\n\(mix.stderr.suffix(500))"])
         }
 
+        // Trim the dead air after the hang-up. The mix decides the length and
+        // the two tracks are cut to match, so they stay aligned.
+        let trimmed = trimTrailingSilence(ffmpeg: ffmpeg, paths: paths) ?? seconds
+
         let enc = try Shell.run(ffmpeg, ["-y", "-i", paths.mixWav.path, "-c:a", "aac", "-b:a", "64k", paths.m4a.path])
         guard enc.status == 0 else {
             throw NSError(domain: "callrec", code: Int(enc.status), userInfo: [NSLocalizedDescriptionKey:
@@ -113,6 +151,6 @@ public final class CallRecorder: @unchecked Sendable {
             try? fm.removeItem(at: paths.micWav)
             try? fm.moveItem(at: micDown, to: paths.micWav)
         }
-        return RecordingResult(paths: paths, seconds: seconds, kept: true)
+        return RecordingResult(paths: paths, seconds: trimmed, kept: true)
     }
 }

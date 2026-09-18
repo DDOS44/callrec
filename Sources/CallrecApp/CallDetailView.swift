@@ -10,6 +10,7 @@ struct CallDetailView: View {
     @State private var who = ""
     @State private var notes = ""
     @State private var saveTask: Task<Void, Never>?
+    @State private var showRaw = false
 
     var body: some View {
         ScrollView {
@@ -20,6 +21,7 @@ struct CallDetailView: View {
                 whoSection
                 transcriptSection
                 notesSection
+                rawTranscriptSection
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -134,6 +136,25 @@ struct CallDetailView: View {
                 .padding(10)
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
                 .onChange(of: notes) { scheduleSave() }
+        }
+    }
+
+    /// The unedited speech-to-text, folded away. Worth having when a cleaned
+    /// line reads oddly and you want to know what was actually said.
+    @ViewBuilder
+    private var rawTranscriptSection: some View {
+        if !call.rawTranscript.isEmpty {
+            DisclosureGroup(isExpanded: $showRaw) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(call.rawTranscript) { line in
+                        TranscriptRow(line: line, isCurrent: false, onTap: { player.seek(to: line.start) })
+                    }
+                }
+                .padding(.top, 6)
+            } label: {
+                Text("Raw transcript")
+                    .font(.headline)
+            }
         }
     }
 
