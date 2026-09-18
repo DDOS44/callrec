@@ -82,7 +82,7 @@ struct CallDetailView: View {
             TextField("name", text: $who)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 260)
-                .onChange(of: who) { _ in scheduleSave() }
+                .onChange(of: who) { scheduleSave() }
         }
         .font(.body)
     }
@@ -104,7 +104,7 @@ struct CallDetailView: View {
                                 .id(line.id)
                         }
                     }
-                    .onChange(of: player.time) { _ in
+                    .onChange(of: player.time) {
                         guard player.playing, let current = call.transcript.last(where: { $0.start <= player.time }) else { return }
                         withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(current.id, anchor: .center) }
                     }
@@ -127,7 +127,7 @@ struct CallDetailView: View {
                 .frame(minHeight: 100)
                 .padding(10)
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
-                .onChange(of: notes) { _ in scheduleSave() }
+                .onChange(of: notes) { scheduleSave() }
         }
     }
 
