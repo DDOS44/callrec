@@ -60,13 +60,30 @@ public enum Transcriber {
     }
 
     /// Transcribes a finished recording and writes the markdown next to it.
+    ///
+    /// The two tracks are transcribed separately so each line can be labelled:
+    /// the tap is the other person, the microphone is you. Whisper uses Metal,
+    /// so the passes run one after the other rather than in parallel.
     @discardableResult
     public static func run(paths: RecordingPaths, seconds: Double, date: Date, config: Config) throws -> URL {
-        let segments = try transcribe(wav: paths.mixWav, config: config)
+        let fm = FileManager.default
+        var segments: [Segment]
+
+        if fm.fileExists(atPath: paths.farWav.path), fm.fileExists(atPath: paths.micWav.path) {
+            let them = try transcribe(wav: paths.farWav, config: config)
+            let me = try transcribe(wav: paths.micWav, config: config)
+            let themRMS = (try? AudioLevels.perSecond(url: paths.farWav)) ?? []
+            let meRMS = (try? AudioLevels.perSecond(url: paths.micWav)) ?? []
+            segments = SpeakerMerge.merge(me: me, them: them, meRMS: meRMS, themRMS: themRMS, frameSeconds: 1)
+        } else {
+            segments = try transcribe(wav: paths.mixWav, config: config)
+        }
         let md = Markdown.render(date: date, seconds: seconds,
                                  audioName: paths.m4a.lastPathComponent, segments: segments)
         try md.write(to: paths.md, atomically: true, encoding: .utf8)
-        try? FileManager.default.removeItem(at: paths.mixWav)
+        for scratch in [paths.mixWav, paths.farWav, paths.micWav] {
+            try? fm.removeItem(at: scratch)
+        }
         return paths.md
     }
 

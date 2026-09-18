@@ -1,13 +1,27 @@
 import Foundation
 
+public enum Speaker: String, Codable, Sendable {
+    case me = "Me"
+    case them = "Them"
+    case unknown = ""
+
+    public var label: String { rawValue }
+}
+
 public struct Segment {
     public let start: Double
     public let end: Double
     public let text: String
+    public let speaker: Speaker
 
-    public init(start: Double, end: Double, text: String) {
-        self.start = start; self.end = end; self.text = text
+    public init(start: Double, end: Double, text: String, speaker: Speaker = .unknown) {
+        self.start = start
+        self.end = end
+        self.text = text
+        self.speaker = speaker
     }
+
+    public var duration: Double { max(end - start, 0) }
 }
 
 public enum Markdown {
@@ -19,7 +33,13 @@ public enum Markdown {
         out += "- audio: \(audioName)\n- outcome: \n- who picked up: \n\n## Transcript\n\n"
         for seg in segments {
             let mm = Int(seg.start) / 60, ss = Int(seg.start) % 60
-            out += "[\(String(format: "%02d:%02d", mm, ss))] \(seg.text.trimmingCharacters(in: .whitespaces))\n"
+            let stamp = String(format: "%02d:%02d", mm, ss)
+            let text = seg.text.trimmingCharacters(in: .whitespaces)
+            if seg.speaker == .unknown {
+                out += "[\(stamp)] \(text)\n"
+            } else {
+                out += "[\(stamp)] **\(seg.speaker.label):** \(text)\n"
+            }
         }
         out += "\n## Notes\n\n- what they said that wasn't in the flow: \n"
         return out

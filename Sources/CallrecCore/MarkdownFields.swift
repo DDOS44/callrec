@@ -74,7 +74,11 @@ public enum MarkdownFields {
             if line.hasPrefix("## ") { inTranscript = false }
             guard inTranscript, line.hasPrefix("[") else { continue }
             if let close = line.firstIndex(of: "]") {
-                return String(line[line.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+                var text = String(line[line.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+                for candidate in [Speaker.me, .them] where text.hasPrefix("**\(candidate.label):**") {
+                    text = String(text.dropFirst("**\(candidate.label):**".count)).trimmingCharacters(in: .whitespaces)
+                }
+                return text
             }
         }
         return ""
@@ -89,8 +93,13 @@ public enum MarkdownFields {
             guard inTranscript, line.hasPrefix("["), let close = line.firstIndex(of: "]") else { continue }
             let stamp = line[line.index(after: line.startIndex)..<close].components(separatedBy: ":")
             guard stamp.count == 2, let m = Double(stamp[0]), let s = Double(stamp[1]) else { continue }
-            let text = String(line[line.index(after: close)...]).trimmingCharacters(in: .whitespaces)
-            out.append(Segment(start: m * 60 + s, end: m * 60 + s, text: text))
+            var text = String(line[line.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+            var speaker = Speaker.unknown
+            for candidate in [Speaker.me, .them] where text.hasPrefix("**\(candidate.label):**") {
+                speaker = candidate
+                text = String(text.dropFirst("**\(candidate.label):**".count)).trimmingCharacters(in: .whitespaces)
+            }
+            out.append(Segment(start: m * 60 + s, end: m * 60 + s, text: text, speaker: speaker))
         }
         return out
     }

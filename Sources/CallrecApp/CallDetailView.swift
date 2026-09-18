@@ -96,12 +96,11 @@ struct CallDetailView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ScrollViewReader { proxy in
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(call.transcript) { line in
-                            TranscriptRow(line: line,
-                                          isCurrent: isCurrent(line),
-                                          onTap: { player.seek(to: line.start) })
-                                .id(line.id)
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(TranscriptGroup.group(call.transcript)) { group in
+                            TranscriptGroupView(group: group,
+                                                currentLine: currentLine?.id,
+                                                onTap: { player.seek(to: $0) })
                         }
                     }
                     .onChange(of: player.time) {
@@ -113,9 +112,9 @@ struct CallDetailView: View {
         }
     }
 
-    private func isCurrent(_ line: TranscriptLine) -> Bool {
-        guard let current = call.transcript.last(where: { $0.start <= player.time }) else { return false }
-        return current.id == line.id && player.duration > 0
+    private var currentLine: TranscriptLine? {
+        guard player.duration > 0 else { return nil }
+        return call.transcript.last(where: { $0.start <= player.time })
     }
 
     private var notesSection: some View {
@@ -168,6 +167,29 @@ struct SectionLabel: View {
     var body: some View {
         Text(text)
             .font(.headline)
+    }
+}
+
+struct TranscriptGroupView: View {
+    let group: TranscriptGroup
+    let currentLine: UUID?
+    let onTap: (Double) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if group.speaker != .unknown {
+                Text(group.speaker == .me ? "You" : "Them")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(group.speaker == .me ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                    .padding(.leading, 8)
+            }
+            ForEach(group.lines) { line in
+                TranscriptRow(line: line,
+                              isCurrent: currentLine == line.id,
+                              onTap: { onTap(line.start) })
+                    .id(line.id)
+            }
+        }
     }
 }
 

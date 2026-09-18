@@ -23,6 +23,7 @@ enum SelfTest {
         f += silenceSplitter()
         f += markdownFields()
         f += wallClockPadding()
+        f += speakerMerge()
         return f
     }
 
@@ -32,6 +33,58 @@ enum SelfTest {
 
     static func equal<T: Equatable>(_ a: T, _ b: T, _ check: String) -> [Failure] {
         expect(a == b, check, "got \(a), expected \(b)")
+    }
+
+    // MARK: - Speaker attribution
+
+    public static func speakerMerge() -> [Failure] {
+        var f: [Failure] = []
+
+        // 1 frame = 1 s. They talk loudly from 0-4; I talk from 5-8.
+        let themRMS: [Float] = [0.30, 0.30, 0.30, 0.30, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+        let meRMS: [Float]   = [0.05, 0.05, 0.05, 0.05, 0.01, 0.20, 0.20, 0.20, 0.20, 0.01]
+
+        let them = [Segment(start: 0, end: 4, text: "Kaun bol raha hai?")]
+        // The first "me" line is the speaker bleeding into the mic; the second is real.
+        let me = [Segment(start: 0, end: 4, text: "Kaun bol raha hai?"),
+                  Segment(start: 5, end: 8, text: "Devansh baat kar raha hoon.")]
+
+        let kept = SpeakerMerge.removeBleed(me: me, them: them, meRMS: meRMS, themRMS: themRMS, frameSeconds: 1)
+        f += equal(kept.count, 1, "speaker.bleedDropped")
+        f += equal(kept.first?.text ?? "", "Devansh baat kar raha hoon.", "speaker.realLineKept")
+
+        // Loud on the mic over the same window means I really did talk over them.
+        let loudMe: [Float] = [0.40, 0.40, 0.40, 0.40, 0.01, 0.20, 0.20, 0.20, 0.20, 0.01]
+        f += equal(SpeakerMerge.removeBleed(me: me, them: them, meRMS: loudMe, themRMS: themRMS, frameSeconds: 1).count,
+                   2, "speaker.talkOverKept")
+
+        // Overlap below the threshold is never treated as bleed.
+        let brief = [Segment(start: 3, end: 8, text: "haan")]
+        f += equal(SpeakerMerge.removeBleed(me: brief, them: them, meRMS: meRMS, themRMS: themRMS, frameSeconds: 1).count,
+                   1, "speaker.lowOverlapKept")
+
+        f += equal(SpeakerMerge.overlapFraction(Segment(start: 0, end: 4, text: ""),
+                                                Segment(start: 0, end: 2, text: "")), 0.5, "speaker.overlapHalf")
+        f += equal(SpeakerMerge.overlapFraction(Segment(start: 10, end: 12, text: ""),
+                                                Segment(start: 0, end: 2, text: "")), 0, "speaker.noOverlap")
+        f += equal(SpeakerMerge.level(themRMS, from: 0, to: 3.9, frameSeconds: 1), 0.30, "speaker.level")
+
+        // Merged output is in time order and labelled.
+        let merged = SpeakerMerge.merge(me: me, them: them, meRMS: meRMS, themRMS: themRMS, frameSeconds: 1)
+        f += equal(merged.count, 2, "speaker.mergedCount")
+        f += equal(merged.first?.speaker ?? .unknown, .them, "speaker.firstIsThem")
+        f += equal(merged.last?.speaker ?? .unknown, .me, "speaker.lastIsMe")
+
+        // The markdown carries the labels, and reading it back recovers them.
+        let md = Markdown.render(date: Date(), seconds: 10, audioName: "x.m4a", segments: merged)
+        f += expect(md.contains("[00:00] **Them:** Kaun bol raha hai?"), "speaker.markdownThem", "them line missing")
+        f += expect(md.contains("[00:05] **Me:** Devansh baat kar raha hoon."), "speaker.markdownMe", "me line missing")
+        let parsed = MarkdownFields.segments(md: md)
+        f += equal(parsed.count, 2, "speaker.parsedCount")
+        f += equal(parsed.first?.speaker ?? .unknown, .them, "speaker.parsedSpeaker")
+        f += equal(parsed.first?.text ?? "", "Kaun bol raha hai?", "speaker.parsedTextClean")
+        f += equal(MarkdownFields.firstTranscriptLine(md: md), "Kaun bol raha hai?", "speaker.previewStripsLabel")
+        return f
     }
 
     // MARK: - Wall-clock padding

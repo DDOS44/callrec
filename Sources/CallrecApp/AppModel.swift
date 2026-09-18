@@ -103,7 +103,7 @@ final class AppModel: ObservableObject {
     func stats(days back: Int) -> Stats {
         let cutoff = Calendar.current.date(byAdding: .day, value: -back, to: Date()) ?? Date()
         var s = Stats()
-        for call in allCalls where call.date >= cutoff {
+        for call in allCalls where call.date >= cutoff && !call.isTest {
             s.dials += 1
             if call.connected { s.connects += 1; s.talk += call.seconds }
             if call.booked { s.booked += 1 }
@@ -113,7 +113,7 @@ final class AppModel: ObservableObject {
 
     var todayStats: Stats {
         var s = Stats()
-        for call in allCalls where Calendar.current.isDateInToday(call.date) {
+        for call in allCalls where Calendar.current.isDateInToday(call.date) && !call.isTest {
             s.dials += 1
             if call.connected { s.connects += 1; s.talk += call.seconds }
             if call.booked { s.booked += 1 }

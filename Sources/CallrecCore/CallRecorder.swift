@@ -103,8 +103,16 @@ public final class CallRecorder: @unchecked Sendable {
                 "ffmpeg could not write the m4a.\n\(enc.stderr.suffix(500))"])
         }
 
-        try? fm.removeItem(at: paths.farWav)
-        try? fm.removeItem(at: paths.micWav)
+        // The two tracks stay on disk: they are what tells us who said what.
+        // The microphone is resampled to match the tap. Both are deleted after
+        // transcription.
+        let micDown = paths.micWav.deletingPathExtension().appendingPathExtension("16k.wav")
+        let down = try Shell.run(ffmpeg, ["-y", "-i", paths.micWav.path, "-ac", "1", "-ar", "16000",
+                                          "-c:a", "pcm_s16le", micDown.path])
+        if down.status == 0 {
+            try? fm.removeItem(at: paths.micWav)
+            try? fm.moveItem(at: micDown, to: paths.micWav)
+        }
         return RecordingResult(paths: paths, seconds: seconds, kept: true)
     }
 }

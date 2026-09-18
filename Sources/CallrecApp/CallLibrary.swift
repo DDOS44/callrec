@@ -24,6 +24,8 @@ struct Call: Identifiable, Hashable {
 
     var searchText: String { (transcript.map(\.text) + [notes, who, outcome]).joined(separator: " ").lowercased() }
     var connected: Bool { seconds >= 20 }
+    /// Test calls are excluded from the counters.
+    var isTest: Bool { outcome == Outcome.test.rawValue }
     var booked: Bool { outcome.lowercased() == "booked" }
 
     static func == (a: Call, b: Call) -> Bool { a.id == b.id && a.outcome == b.outcome && a.who == b.who && a.notes == b.notes }
@@ -34,7 +36,30 @@ struct TranscriptLine: Identifiable, Hashable {
     let id = UUID()
     let start: Double
     let text: String
+    var speaker: Speaker = .unknown
     var stamp: String { String(format: "%02d:%02d", Int(start) / 60, Int(start) % 60) }
+}
+
+/// Consecutive lines from the same person, so a back-and-forth reads as a
+/// conversation rather than a list.
+struct TranscriptGroup: Identifiable {
+    let id = UUID()
+    let speaker: Speaker
+    var lines: [TranscriptLine]
+    var start: Double { lines.first?.start ?? 0 }
+
+    static func group(_ lines: [TranscriptLine]) -> [TranscriptGroup] {
+        var out: [TranscriptGroup] = []
+        for line in lines {
+            if var last = out.last, last.speaker == line.speaker {
+                last.lines.append(line)
+                out[out.count - 1] = last
+            } else {
+                out.append(TranscriptGroup(speaker: line.speaker, lines: [line]))
+            }
+        }
+        return out
+    }
 }
 
 struct Day: Identifiable, Hashable {
@@ -88,7 +113,9 @@ enum Library {
             who: fields.who,
             notes: fields.notes,
             preview: MarkdownFields.firstTranscriptLine(md: md),
-            transcript: MarkdownFields.segments(md: md).map { TranscriptLine(start: $0.start, text: $0.text) }
+            transcript: MarkdownFields.segments(md: md).map {
+                TranscriptLine(start: $0.start, text: $0.text, speaker: $0.speaker)
+            }
         )
     }
 
@@ -108,6 +135,7 @@ enum Outcome: String, CaseIterable, Identifiable {
     case notInterested = "not interested"
     case callback = "callback"
     case nurture = "nurture"
+    case test = "test"
 
     var id: String { rawValue }
     var label: String { self == .none ? "clear" : rawValue }
@@ -120,6 +148,7 @@ enum Outcome: String, CaseIterable, Identifiable {
         case .pitched: return .blue
         case .gatekeeper: return .purple
         case .nurture: return .teal
+        case .test: return .gray
         case .noConnect, .none: return .secondary
         }
     }
