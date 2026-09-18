@@ -77,6 +77,30 @@ case "tap-test":
         exit(1)
     }
 
+case "transcribe":
+    guard args.count >= 2 else {
+        print("usage: callrec transcribe <audio file>")
+        exit(2)
+    }
+    do {
+        let config = Config.load()
+        let input = URL(fileURLWithPath: (args[1] as NSString).expandingTildeInPath)
+        let wav = try Transcriber.toWhisperWav(input)
+        let segments = try Transcriber.transcribe(wav: wav, config: config)
+        if wav != input { try? FileManager.default.removeItem(at: wav) }
+
+        let attrs = try? FileManager.default.attributesOfItem(atPath: input.path)
+        let date = (attrs?[.creationDate] as? Date) ?? Date()
+        let md = Markdown.render(date: date, seconds: segments.last?.end ?? 0,
+                                 audioName: input.lastPathComponent, segments: segments)
+        let mdURL = input.deletingPathExtension().appendingPathExtension("md")
+        try md.write(to: mdURL, atomically: true, encoding: .utf8)
+        print(mdURL.path)
+    } catch {
+        FileHandle.standardError.write("transcribe failed: \(error.localizedDescription)\n".data(using: .utf8)!)
+        exit(1)
+    }
+
 case "record":
     guard #available(macOS 14.2, *) else {
         print("callrec needs macOS 14.2 or newer.")
