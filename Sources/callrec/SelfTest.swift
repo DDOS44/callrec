@@ -19,6 +19,7 @@ enum SelfTest {
         f += markdown()
         f += srtParsing()
         f += watcherStateMachine()
+        f += silenceSplitter()
         return f
     }
 
@@ -28,6 +29,28 @@ enum SelfTest {
 
     static func equal<T: Equatable>(_ a: T, _ b: T, _ check: String) -> [Failure] {
         expect(a == b, check, "got \(a), expected \(b)")
+    }
+
+    // MARK: - Task 8: Silence splitter
+
+    static func silenceSplitter() -> [Failure] {
+        var f: [Failure] = []
+        // 1 frame = 1 s. speech 0-10, silence 10-40, speech 40-55, tiny gap, speech 56-70
+        var rms = [Float](repeating: 0.2, count: 10) + [Float](repeating: 0.001, count: 30)
+        rms += [Float](repeating: 0.2, count: 15) + [0.001] + [Float](repeating: 0.2, count: 14)
+        let s = SilenceSplitter.spans(rms: rms, frameSeconds: 1, threshold: 0.01, minGapSeconds: 20, minSpanSeconds: 8)
+        f += equal(s.count, 2, "silence.count")
+        if s.count == 2 {
+            f += equal(s[0].start, 0, "silence.span0.start")
+            f += equal(s[0].end, 10, "silence.span0.end")
+            f += equal(s[1].start, 40, "silence.span1.start")
+            f += equal(s[1].end, 70, "silence.span1.end")
+        }
+        let short = [Float](repeating: 0.2, count: 3) + [Float](repeating: 0.0, count: 30)
+        f += expect(SilenceSplitter.spans(rms: short, frameSeconds: 1, threshold: 0.01,
+                                          minGapSeconds: 20, minSpanSeconds: 8).isEmpty,
+                    "silence.dropsShortSpans", "short span was kept")
+        return f
     }
 
     // MARK: - Task 7: Watcher state machine
