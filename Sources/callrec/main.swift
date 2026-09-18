@@ -14,6 +14,8 @@ guard let cmd = args.first else { usage() }
 
 switch cmd {
 case "probe":
+    AudioRecordingPermission.request()
+    print("System audio permission: \(AudioRecordingPermission.status.rawValue)")
     print("Polling audio processes every second. Make a call now. Ctrl-C to stop.")
     var last = Set<String>()
     while true {
@@ -34,6 +36,10 @@ case "tap-test":
         print("tap-test needs macOS 14.2 or newer.")
         exit(1)
     }
+    if AudioRecordingPermission.request() != .authorized {
+        print("System audio permission: \(AudioRecordingPermission.status.rawValue)")
+        print(AudioRecordingPermission.deniedMessage)
+    }
     let outURL = URL(fileURLWithPath: "/tmp/callrec-tap-test.wav")
     do {
         let tap = try ProcessTap(mode: .globalExcluding([]))
@@ -47,13 +53,24 @@ case "tap-test":
             meter.accumulate(abl, frames: frames, format: fmt)
         }
         print("Recording 20 s to \(outURL.path). RMS once per second:")
+        var sawAudio = false
+        var warned = false
         for i in 1...20 {
             Thread.sleep(forTimeInterval: 1)
-            print(String(format: "  %2ds  rms=%.5f", i, meter.takeRMS()))
+            let rms = meter.takeRMS()
+            if rms > 0 { sawAudio = true }
+            print(String(format: "  %2ds  rms=%.5f", i, rms))
+            if i >= 3 && !sawAudio && !warned {
+                warned = true
+                print(AudioRecordingPermission.deniedMessage)
+            }
         }
         tap.stop()
         writer.close()
         print("Wrote \(outURL.path)")
+        if !sawAudio {
+            print("Captured silence for the whole 20 s. " + AudioRecordingPermission.deniedMessage)
+        }
     } catch {
         let ns = error as NSError
         FileHandle.standardError.write("tap-test failed: \(ns.localizedDescription) (domain \(ns.domain), OSStatus \(ns.code))\n".data(using: .utf8)!)
