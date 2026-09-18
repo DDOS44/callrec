@@ -11,7 +11,7 @@ struct Config: Codable {
     // exactly when a Continuity call connects.
     var triggerBundleIDs = ["com.apple.avconferenced"]
     var minCallSeconds = 8          // shorter recordings are deleted (misdials, no pickup)
-    var stopAfterSilentSeconds = 3  // watcher: process stops output for this long => call ended
+    var stopAfterSilentSeconds = 6  // watcher: process stops output for this long => call ended
 
     /// Overridable for tests and for pointing the watcher at another app.
     nonisolated(unsafe) static var url: URL = {
