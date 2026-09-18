@@ -1,0 +1,22 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release binary
+        run: swift build -c release --arch arm64
+      - name: Stage binary
+        run: cp .build/release/callrec callrec-arm64
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" callrec-arm64 --generate-notes

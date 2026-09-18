@@ -6,7 +6,7 @@ setvbuf(stdout, nil, _IOLBF, 0)
 let args = Array(CommandLine.arguments.dropFirst())
 
 func usage() -> Never {
-    print("usage: callrec <probe|tap-test|record|watch|transcribe|status|session>")
+    print("usage: callrec <watch|status|record|session|transcribe|install-agent|uninstall-agent|probe|tap-test|mic-test|selftest>")
     exit(2)
 }
 
@@ -74,6 +74,18 @@ case "tap-test":
     } catch {
         let ns = error as NSError
         FileHandle.standardError.write("tap-test failed: \(ns.localizedDescription) (domain \(ns.domain), OSStatus \(ns.code))\n".data(using: .utf8)!)
+        exit(1)
+    }
+
+case "install-agent":
+    do { try Agent.install() } catch {
+        FileHandle.standardError.write("install-agent failed: \(error.localizedDescription)\n".data(using: .utf8)!)
+        exit(1)
+    }
+
+case "uninstall-agent":
+    do { try Agent.uninstall() } catch {
+        FileHandle.standardError.write("uninstall-agent failed: \(error.localizedDescription)\n".data(using: .utf8)!)
         exit(1)
     }
 
