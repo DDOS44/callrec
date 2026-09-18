@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 
 struct WatcherState: Codable {
     var state: String          // "idle" | "recording"
@@ -28,6 +29,13 @@ final class Watcher {
 
     func run() -> Never {
         AudioRecordingPermission.request()
+        // Ask for the mic up front so callrec appears in System Settings > Microphone before the first call.
+        let sem = DispatchSemaphore(value: 0)
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            if !granted { FileHandle.standardError.write("Microphone permission not granted. System Settings > Privacy & Security > Microphone > enable callrec.\n".data(using: .utf8)!) }
+            sem.signal()
+        }
+        _ = sem.wait(timeout: .now() + 60)
         log("watching for \(config.triggerBundleIDs.joined(separator: ", "))")
         writeState(state: "idle", lastCall: nil)
 
