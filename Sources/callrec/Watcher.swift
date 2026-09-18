@@ -152,6 +152,9 @@ final class Watcher {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
         lines.append("Today's folder: \(folder.path)")
         lines.append("Transcripts today: \(files.filter { $0.hasSuffix(".md") }.count)")
+        if !CallHistory.readable {
+            lines.append("Note: " + CallHistory.noAccessMessage)
+        }
         return lines.joined(separator: "\n")
     }
 }

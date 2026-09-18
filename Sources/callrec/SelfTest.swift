@@ -24,6 +24,7 @@ enum SelfTest {
         f += markdownFields()
         f += wallClockPadding()
         f += speakerMerge()
+        f += callIdentity()
         return f
     }
 
@@ -33,6 +34,64 @@ enum SelfTest {
 
     static func equal<T: Equatable>(_ a: T, _ b: T, _ check: String) -> [Failure] {
         expect(a == b, check, "got \(a), expected \(b)")
+    }
+
+    // MARK: - Call identity
+
+    public static func callIdentity() -> [Failure] {
+        var f: [Failure] = []
+
+        // Numbers match on the last ten digits, however they are written.
+        f += equal(LeadSheet.key("+91 85888 81626"), "8588881626", "identity.keySpaced")
+        f += equal(LeadSheet.key("085888-81626"), "8588881626", "identity.keyPunctuated")
+        f += equal(LeadSheet.key("+918588881626"), "8588881626", "identity.keyE164")
+        f += equal(LeadSheet.key("123"), "123", "identity.keyShort")
+
+        // Quoted fields containing commas must not shift the columns.
+        let csv = """
+        company,owner,phone,note
+        AJ Placement,,+91 11 4763 1000,"big, busy office"
+        Futureheights,Shubham Gupta,+91 85888 81626,317 reviews
+        """
+        let rows = LeadSheet.parse(csv)
+        f += equal(rows.count, 3, "identity.csvRows")
+        f += equal(rows[1].count, 4, "identity.csvColumns")
+        f += equal(rows[1][3], "big, busy office", "identity.csvQuotedComma")
+
+        // Swift reads "\r\n" as a single Character, so a CRLF sheet used to parse
+        // as one enormous row and nothing ever matched.
+        let crlf = csv.replacingOccurrences(of: "\n", with: "\r\n")
+        f += equal(LeadSheet.parse(crlf).count, 3, "identity.csvCRLF")
+        f += equal(LeadSheet.parse(csv.replacingOccurrences(of: "\n", with: "\r")).count, 3, "identity.csvCR")
+
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-leads-\(UUID()).csv")
+        try? csv.write(to: tmp, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let hit = LeadSheet.lookup(number: "+918588881626", csv: tmp)
+        f += equal(hit?.company ?? "", "Futureheights", "identity.leadCompany")
+        f += equal(hit?.owner ?? "", "Shubham Gupta", "identity.leadOwner")
+        f += expect(LeadSheet.lookup(number: "+919999000011", csv: tmp) == nil, "identity.leadMiss", "unknown number matched")
+
+        // Identity lines go into the header and read back cleanly.
+        let base = Markdown.render(date: Date(), seconds: 30, audioName: "x.m4a",
+                                   segments: [Segment(start: 0, end: 2, text: "hi", speaker: .them)])
+        let withID = MarkdownFields.setIdentity(md: base, CallIdentity(number: "+918588881626",
+                                                                      contact: "Shubham",
+                                                                      company: "Futureheights",
+                                                                      owner: "Shubham Gupta"))
+        let read = MarkdownFields.identity(md: withID)
+        f += equal(read.number, "+918588881626", "identity.roundTripNumber")
+        f += equal(read.company, "Futureheights", "identity.roundTripCompany")
+        f += equal(read.owner, "Shubham Gupta", "identity.roundTripOwner")
+        f += expect(withID.contains("- audio: x.m4a"), "identity.audioKept", "audio line lost")
+        f += equal(MarkdownFields.segments(md: withID).count, 1, "identity.transcriptKept")
+
+        // Writing twice must not duplicate the lines.
+        let twice = MarkdownFields.setIdentity(md: withID, CallIdentity(number: "+910000000000"))
+        f += equal(twice.components(separatedBy: "- number:").count - 1, 1, "identity.noDuplicate")
+        f += equal(MarkdownFields.identity(md: twice).number, "+910000000000", "identity.overwritten")
+        f += equal(MarkdownFields.identity(md: twice).company, "Futureheights", "identity.otherFieldsKept")
+        return f
     }
 
     // MARK: - Speaker attribution

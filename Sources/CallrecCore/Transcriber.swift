@@ -81,6 +81,10 @@ public enum Transcriber {
         let md = Markdown.render(date: date, seconds: seconds,
                                  audioName: paths.m4a.lastPathComponent, segments: segments)
         try md.write(to: paths.md, atomically: true, encoding: .utf8)
+        let identity = Identify.apply(to: paths.md, callDate: date, config: config)
+        if identity.isEmpty, !CallHistory.readable {
+            print("[callrec] " + CallHistory.noAccessMessage)
+        }
         for scratch in [paths.mixWav, paths.farWav, paths.micWav] {
             try? fm.removeItem(at: scratch)
         }

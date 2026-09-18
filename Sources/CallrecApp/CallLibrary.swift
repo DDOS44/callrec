@@ -12,10 +12,29 @@ struct Call: Identifiable, Hashable {
     var date: Date
     var seconds: Double
     var outcome: String
+    var identity: CallIdentity
     var who: String
     var notes: String
     var preview: String
     var transcript: [TranscriptLine]
+
+    /// What the row leads with: the company, else the contact, else the number,
+    /// else just the time.
+    var title: String {
+        for candidate in [identity.company, identity.contact, identity.number] where !candidate.isEmpty {
+            return candidate
+        }
+        return time
+    }
+
+    var hasIdentity: Bool { !identity.isEmpty }
+
+    var subtitle: String {
+        var bits: [String] = []
+        if !identity.owner.isEmpty { bits.append(identity.owner) }
+        if !identity.number.isEmpty, identity.number != title { bits.append(identity.number) }
+        return bits.joined(separator: " · ")
+    }
 
     var durationLabel: String {
         let s = Int(seconds)
@@ -110,6 +129,7 @@ enum Library {
             date: f.date(from: "\(day) \(time)") ?? Date(),
             seconds: MarkdownFields.duration(md: md),
             outcome: fields.outcome,
+            identity: MarkdownFields.identity(md: md),
             who: fields.who,
             notes: fields.notes,
             preview: MarkdownFields.firstTranscriptLine(md: md),

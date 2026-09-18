@@ -16,6 +16,10 @@ public enum MarkdownFields {
         }
     }
 
+    static let numberPrefix = "- number:"
+    static let contactPrefix = "- contact:"
+    static let companyPrefix = "- company:"
+    static let ownerPrefix = "- owner:"
     static let outcomePrefix = "- outcome:"
     static let whoPrefix = "- who picked up:"
     static let notesPrefix = "- what they said that wasn't in the flow:"
@@ -64,6 +68,38 @@ public enum MarkdownFields {
 
     private static func value(of line: String, after prefix: String) -> String {
         String(line.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+    }
+
+    public static func identity(md: String) -> CallIdentity {
+        var id = CallIdentity()
+        for line in md.components(separatedBy: "\n") {
+            if line.hasPrefix(numberPrefix) { id.number = value(of: line, after: numberPrefix) }
+            else if line.hasPrefix(contactPrefix) { id.contact = value(of: line, after: contactPrefix) }
+            else if line.hasPrefix(companyPrefix) { id.company = value(of: line, after: companyPrefix) }
+            else if line.hasPrefix(ownerPrefix) { id.owner = value(of: line, after: ownerPrefix) }
+        }
+        return id
+    }
+
+    /// Writes the identity lines into the header, replacing any that exist and
+    /// inserting the rest just above "- outcome:".
+    public static func setIdentity(md: String, _ id: CallIdentity) -> String {
+        var lines = md.components(separatedBy: "\n")
+        let wanted: [(String, String)] = [
+            (numberPrefix, id.number), (contactPrefix, id.contact),
+            (companyPrefix, id.company), (ownerPrefix, id.owner)
+        ].filter { !$0.1.isEmpty }
+
+        for (prefix, value) in wanted {
+            if let i = lines.firstIndex(where: { $0.hasPrefix(prefix) }) {
+                lines[i] = "\(prefix) \(value)"
+            } else if let anchor = lines.firstIndex(where: { $0.hasPrefix(outcomePrefix) }) {
+                lines.insert("\(prefix) \(value)", at: anchor)
+            } else if let anchor = lines.firstIndex(where: { $0.hasPrefix("- audio:") }) {
+                lines.insert("\(prefix) \(value)", at: anchor + 1)
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// The first transcript line, for the call list preview.

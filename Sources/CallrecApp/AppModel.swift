@@ -16,10 +16,13 @@ final class AppModel: ObservableObject {
     @Published var savedFlash = false
     @Published var statsRange: StatsRange = .today
 
+    @Published var callHistoryReadable = true
+    private var checkedCallHistory = false
     private var folderWatcher: FolderWatcher?
     private var timer: Timer?
 
     init() {
+        ContactsLookup.request { _ in }
         reload()
         selectedDay = days.first?.name
         selectedCall = days.first?.calls.first?.id
@@ -137,9 +140,19 @@ final class AppModel: ObservableObject {
             recordingSince = nil
         }
         lastCallAt = allCalls.first?.date
+        if !checkedCallHistory {
+            checkedCallHistory = true
+            callHistoryReadable = CallHistory.readable
+        }
     }
 
     var healthy: Bool { agentRunning }
+
+    /// Soft hint, never an error: without Full Disk Access we simply cannot say
+    /// who a call was with.
+    var callHistoryHint: String? {
+        callHistoryReadable ? nil : CallHistory.noAccessMessage
+    }
 
     private var stateURL: URL {
         Config.url.deletingLastPathComponent().appendingPathComponent("state.json")

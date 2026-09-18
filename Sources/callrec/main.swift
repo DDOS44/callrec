@@ -7,7 +7,7 @@ setvbuf(stdout, nil, _IOLBF, 0)
 let args = Array(CommandLine.arguments.dropFirst())
 
 func usage() -> Never {
-    print("usage: callrec <watch|status|record|session|transcribe|install-agent|uninstall-agent|probe|tap-test|mic-test|selftest>")
+    print("usage: callrec <watch|status|record|session|transcribe|relabel|install-agent|uninstall-agent|probe|tap-test|mic-test|selftest>")
     exit(2)
 }
 
@@ -83,6 +83,14 @@ case "tap-test":
         FileHandle.standardError.write("tap-test failed: \(ns.localizedDescription) (domain \(ns.domain), OSStatus \(ns.code))\n".data(using: .utf8)!)
         exit(1)
     }
+
+case "relabel":
+    let config = Config.load()
+    if !CallHistory.readable {
+        print(CallHistory.noAccessMessage)
+    }
+    let result = Identify.relabel(day: args.count > 1 ? args[1] : nil, config: config)
+    print("Labelled \(result.updated) of \(result.scanned) transcript(s).")
 
 case "install-agent":
     do { try Agent.install() } catch {

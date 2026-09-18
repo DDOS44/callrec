@@ -105,9 +105,15 @@ struct CallRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
-                Text(call.time)
-                    .font(.system(.body, design: .rounded).monospacedDigit())
-                    .fontWeight(.medium)
+                Text(call.title)
+                    .font(call.hasIdentity ? .body.weight(.medium)
+                                           : .system(.body, design: .rounded).monospacedDigit().weight(.medium))
+                    .lineLimit(1)
+                if call.hasIdentity {
+                    Text(call.time)
+                        .font(.system(.caption, design: .rounded).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
                 Text(call.durationLabel)
                     .font(.caption)
                     .padding(.horizontal, 6).padding(.vertical, 2)
@@ -124,7 +130,7 @@ struct CallRow: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
-                Text(call.preview.isEmpty ? "No transcript yet" : call.preview)
+                Text(call.subtitle.isEmpty ? (call.preview.isEmpty ? "No transcript yet" : call.preview) : call.subtitle)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -215,6 +221,11 @@ struct StatusPill: View {
             if !model.healthy {
                 Button("Start recorder") { model.setAgent(running: true) }
                     .controlSize(.small)
+            }
+            if let hint = model.callHistoryHint {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+                    .help(hint)
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 1.0), value: model.savedFlash)

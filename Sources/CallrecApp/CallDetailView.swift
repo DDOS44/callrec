@@ -37,14 +37,21 @@ struct CallDetailView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(call.time)
+            Text(call.title)
                 .font(.largeTitle.weight(.semibold))
                 .tracking(-0.5)
                 .monospacedDigit()
-            Text("\(dayLabel) · \(call.durationLabel)")
+            Text(subtitleLine)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var subtitleLine: String {
+        var bits = [call.hasIdentity ? "\(dayLabel), \(call.time)" : dayLabel, call.durationLabel]
+        if !call.identity.owner.isEmpty { bits.append(call.identity.owner) }
+        if !call.identity.number.isEmpty, call.identity.number != call.title { bits.append(call.identity.number) }
+        return bits.joined(separator: " · ")
     }
 
     private var dayLabel: String {
