@@ -18,6 +18,7 @@ enum SelfTest {
         f += config()
         f += markdown()
         f += srtParsing()
+        f += watcherStateMachine()
         return f
     }
 
@@ -27,6 +28,53 @@ enum SelfTest {
 
     static func equal<T: Equatable>(_ a: T, _ b: T, _ check: String) -> [Failure] {
         expect(a == b, check, "got \(a), expected \(b)")
+    }
+
+    // MARK: - Task 7: Watcher state machine
+
+    static func watcherStateMachine() -> [Failure] {
+        var f: [Failure] = []
+
+        var m = WatcherStateMachine(stopAfterSilentPolls: 3)
+        f += equal(m.poll(callActive: false), .none, "watcher.idleStaysIdle")
+        f += equal(m.poll(callActive: true), .startRecording, "watcher.idleToRecording")
+        f += equal(m.state, .recording, "watcher.stateAfterStart")
+        f += equal(m.poll(callActive: true), .none, "watcher.stillRecording")
+
+        // Two inactive polls are not enough; the third ends the call.
+        f += equal(m.poll(callActive: false), .none, "watcher.inactive1")
+        f += equal(m.poll(callActive: false), .none, "watcher.inactive2")
+        f += equal(m.poll(callActive: false), .stopRecording, "watcher.inactive3Stops")
+        f += equal(m.state, .idle, "watcher.stateAfterStop")
+
+        // A blip of inactivity mid-call must not end the recording.
+        var b = WatcherStateMachine(stopAfterSilentPolls: 3)
+        _ = b.poll(callActive: true)
+        _ = b.poll(callActive: false)
+        _ = b.poll(callActive: true)
+        f += equal(b.poll(callActive: false), .none, "watcher.blipDoesNotStop")
+        f += equal(b.consecutiveInactivePolls, 1, "watcher.blipResetsCounter")
+
+        // Back-to-back calls: a new call starts cleanly after a stop.
+        f += equal(b.poll(callActive: false), .none, "watcher.secondCall.inactive2")
+        f += equal(b.poll(callActive: false), .stopRecording, "watcher.secondCall.stops")
+        f += equal(b.poll(callActive: true), .startRecording, "watcher.secondCall.starts")
+
+        // An error resets to idle rather than exiting, and recording can resume.
+        b.reset()
+        f += equal(b.state, .idle, "watcher.resetGoesIdle")
+        f += equal(b.poll(callActive: true), .startRecording, "watcher.resumesAfterReset")
+
+        // Trigger matching only fires on the configured bundle IDs.
+        let snap = [
+            AudioProcessInfo(objectID: 1, pid: 10, bundleID: "com.spotify.client", isRunningOutput: true, isRunningInput: false),
+            AudioProcessInfo(objectID: 2, pid: 11, bundleID: "com.apple.avconferenced", isRunningOutput: false, isRunningInput: false)
+        ]
+        f += expect(WatcherStateMachine.callActive(in: snap, triggerBundleIDs: ["com.spotify.client"]),
+                    "watcher.matchesTrigger", "spotify should count as active")
+        f += expect(!WatcherStateMachine.callActive(in: snap, triggerBundleIDs: ["com.apple.avconferenced"]),
+                    "watcher.idleTriggerNotActive", "avconferenced is present but not running audio")
+        return f
     }
 
     // MARK: - Task 6: Markdown

@@ -77,6 +77,21 @@ case "tap-test":
         exit(1)
     }
 
+case "watch":
+    guard #available(macOS 14.2, *) else {
+        print("callrec needs macOS 14.2 or newer.")
+        exit(1)
+    }
+    let watcher = Watcher(config: Config.load())
+    watcher.run()
+
+case "status":
+    guard #available(macOS 14.2, *) else {
+        print("callrec needs macOS 14.2 or newer.")
+        exit(1)
+    }
+    print(Watcher.statusText(config: Config.load()))
+
 case "transcribe":
     guard args.count >= 2 else {
         print("usage: callrec transcribe <audio file>")
