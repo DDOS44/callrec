@@ -16,6 +16,8 @@ enum SelfTest {
         var f: [Failure] = []
         f += paths()
         f += config()
+        f += markdown()
+        f += srtParsing()
         return f
     }
 
@@ -25,6 +27,47 @@ enum SelfTest {
 
     static func equal<T: Equatable>(_ a: T, _ b: T, _ check: String) -> [Failure] {
         expect(a == b, check, "got \(a), expected \(b)")
+    }
+
+    // MARK: - Task 6: Markdown
+
+    static func markdown() -> [Failure] {
+        var c = DateComponents(); c.year = 2026; c.month = 9; c.day = 18; c.hour = 14; c.minute = 2; c.second = 0
+        guard let d = Calendar.current.date(from: c) else { return [Failure(check: "markdown", detail: "bad date")] }
+        let md = Markdown.render(date: d, seconds: 65.4, audioName: "14-02-00.m4a", segments: [
+            Segment(start: 0, end: 2.5, text: "Hi, is Vineet around?"),
+            Segment(start: 62, end: 65, text: "Theek hai, Thursday.")
+        ])
+        var f: [Failure] = []
+        f += expect(md.hasPrefix("# Call 2026-09-18 14:02\n"), "markdown.title", "bad title line")
+        f += expect(md.contains("- duration: 1m 05s"), "markdown.duration", "bad duration")
+        f += expect(md.contains("- audio: 14-02-00.m4a"), "markdown.audio", "bad audio line")
+        f += expect(md.contains("[00:00] Hi, is Vineet around?"), "markdown.firstSegment", "missing first segment")
+        f += expect(md.contains("[01:02] Theek hai, Thursday."), "markdown.secondSegment", "missing second segment")
+        f += expect(md.contains("## Notes\n"), "markdown.notes", "missing notes section")
+        return f
+    }
+
+    static func srtParsing() -> [Failure] {
+        let srt = """
+        1
+        00:00:00,000 --> 00:00:02,500
+        Hi, is Vineet around?
+
+        2
+        00:01:02,120 --> 00:01:05,000
+        Theek hai, Thursday.
+
+        """
+        let segs = Transcriber.parseSRT(srt)
+        var f: [Failure] = []
+        f += equal(segs.count, 2, "srt.count")
+        guard segs.count == 2 else { return f }
+        f += equal(segs[0].text, "Hi, is Vineet around?", "srt.text0")
+        f += equal(segs[0].start, 0.0, "srt.start0")
+        f += equal(segs[1].start, 62.12, "srt.start1")
+        f += equal(segs[1].text, "Theek hai, Thursday.", "srt.text1")
+        return f
     }
 
     // MARK: - Task 2: Config
