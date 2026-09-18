@@ -73,8 +73,9 @@ struct CallListColumn: View {
                     CallRow(call: call, showDay: model.selectedDay == AppModel.allDaysTag)
                         .tag(call.id)
                 }
+                // No .alternatingRowBackgrounds(): it keeps painting striped
+                // rows below the last call, which read as empty placeholders.
                 .listStyle(.inset)
-                .alternatingRowBackgrounds()
             }
         }
         .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
@@ -116,9 +117,9 @@ struct CallRow: View {
                 }
                 Text(call.durationLabel)
                     .font(.caption)
+                    .monospacedDigit()
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(.quaternary, in: Capsule())
-                    .monospacedDigit()
                 Spacer(minLength: 4)
                 if let outcome = Outcome(rawValue: call.outcome), outcome != .none {
                     OutcomeCapsule(outcome: outcome)
@@ -209,15 +210,25 @@ struct StatusPill: View {
                     .font(.callout)
                     .transition(.opacity)
             }
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 Circle()
                     .fill(model.recordingSince != nil ? Color.red : (model.healthy ? .green : .secondary))
                     .frame(width: 7, height: 7)
-                Text(model.statusLine)
+                Text(model.statusWord)
                     .font(.callout)
-                    .monospacedDigit()
                     .foregroundStyle(model.healthy ? .primary : .secondary)
+                if let timer = model.recordingClock {
+                    Text(timer)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
             }
+            // Fixed width so the toolbar does not jump when the timer appears.
+            .frame(minWidth: 150, alignment: .leading)
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(.quaternary.opacity(0.4), in: Capsule())
+            .animation(.easeInOut(duration: 0.3), value: model.recordingSince != nil)
             if !model.healthy {
                 Button("Start recorder") { model.setAgent(running: true) }
                     .controlSize(.small)

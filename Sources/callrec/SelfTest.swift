@@ -25,6 +25,7 @@ enum SelfTest {
         f += wallClockPadding()
         f += speakerMerge()
         f += callIdentity()
+        f += transliteration()
         return f
     }
 
@@ -34,6 +35,38 @@ enum SelfTest {
 
     static func equal<T: Equatable>(_ a: T, _ b: T, _ check: String) -> [Failure] {
         expect(a == b, check, "got \(a), expected \(b)")
+    }
+
+    // MARK: - Devanagari to Roman
+
+    public static func transliteration() -> [Failure] {
+        var f: [Failure] = []
+        func check(_ input: String, _ expected: String, _ name: String) {
+            f += equal(Transliterate.devanagariToRoman(input), expected, "translit.\(name)")
+        }
+
+        check("मैं कह रहा हूँ मैं तुम्हारा पैसा तुम्हें दे रहा हूँ",
+              "main kah raha hoon main tumhara paisa tumhe de raha hoon", "sentence")
+        check("कमल", "kamal", "schwaMiddle")
+        check("राम", "raam", "schwaFinalDropped")
+        check("कह", "kah", "schwaFinalDropped2")
+        check("नमस्ते", "namaste", "viramaCluster")
+        check("पंप", "pamp", "anusvaraBeforeLip")
+        check("हिंदी", "hindee", "anusvaraBeforeDental")
+        check("क्या हाल है", "kya haal hai", "override")
+        check("नहीं यार ठीक है", "nahi yaar theek hai", "overrides")
+        check("आप कैसे हैं भाई", "aap kaise hain bhai", "vowelSigns")
+        check("बैंक अमाउंट चेक करो", "bank amount check karo", "loanWords")
+        check("मुझे रिकॉर्डिंग मीटिंग चाहिए", "mujhe recording meeting chaahie", "loanWordsMixed")
+        check("okay मैं Thursday को call करूंगा", "okay main Thursday ko call karoonga", "mixedScript")
+        check("Hello there", "Hello there", "latinUntouched")
+        check("", "", "empty")
+        check("बात कीजिए।", "baat keejie.", "dandaBecomesFullStop")
+        check("१२३", "123", "digits")
+        check("ज़रूरत", "zaroorat", "nukta")
+        check("फ़ोन", "phone", "nuktaLoanWord")
+        check("स्कैमर बोल रहा है", "scammer bol raha hai", "scammer")
+        return f
     }
 
     // MARK: - Call identity

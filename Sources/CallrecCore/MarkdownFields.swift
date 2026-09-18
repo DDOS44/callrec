@@ -102,6 +102,25 @@ public enum MarkdownFields {
         return lines.joined(separator: "\n")
     }
 
+    /// Replaces only the lines under "## Transcript", leaving the header
+    /// fields and the notes exactly as they are.
+    public static func replaceTranscript(md: String, with segments: [Segment]) -> String {
+        var lines = md.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: { $0.hasPrefix("## Transcript") }) else { return md }
+        let after = lines[(start + 1)...].firstIndex(where: { $0.hasPrefix("## ") }) ?? lines.count
+
+        var body = [""]
+        for seg in segments {
+            let mm = Int(seg.start) / 60, ss = Int(seg.start) % 60
+            let stamp = String(format: "%02d:%02d", mm, ss)
+            let text = seg.text.trimmingCharacters(in: .whitespaces)
+            body.append(seg.speaker == .unknown ? "[\(stamp)] \(text)" : "[\(stamp)] **\(seg.speaker.label):** \(text)")
+        }
+        body.append("")
+        lines.replaceSubrange((start + 1)..<after, with: body)
+        return lines.joined(separator: "\n")
+    }
+
     /// The first transcript line, for the call list preview.
     public static func firstTranscriptLine(md: String) -> String {
         var inTranscript = false

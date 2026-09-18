@@ -165,11 +165,19 @@ final class AppModel: ObservableObject {
     }
 
     var statusLine: String {
-        if let since = recordingSince {
-            let s = Int(Date().timeIntervalSince(since))
-            return "Recording \(s / 60)m \(s % 60)s"
-        }
+        [statusWord, recordingClock].compactMap { $0 }.joined(separator: " ")
+    }
+
+    var statusWord: String {
+        if recordingSince != nil { return "Recording" }
         return agentRunning ? "Watching" : "Not running"
+    }
+
+    /// Only while recording, so the pill's width stays stable otherwise.
+    var recordingClock: String? {
+        guard let since = recordingSince else { return nil }
+        let s = Int(Date().timeIntervalSince(since))
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     func setAgent(running: Bool) {

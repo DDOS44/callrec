@@ -132,11 +132,18 @@ enum Library {
             identity: MarkdownFields.identity(md: md),
             who: fields.who,
             notes: fields.notes,
-            preview: MarkdownFields.firstTranscriptLine(md: md),
+            preview: preview(for: MarkdownFields.segments(md: md), md: md),
             transcript: MarkdownFields.segments(md: md).map {
                 TranscriptLine(start: $0.start, text: $0.text, speaker: $0.speaker)
             }
         )
+    }
+
+    /// What the other person said first is the useful line; fall back to mine.
+    private static func preview(for segments: [Segment], md: String) -> String {
+        if let them = segments.first(where: { $0.speaker == .them }) { return them.text }
+        if let me = segments.first(where: { $0.speaker == .me }) { return me.text }
+        return MarkdownFields.firstTranscriptLine(md: md)
     }
 
     static func save(_ call: Call) throws {

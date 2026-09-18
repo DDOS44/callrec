@@ -7,7 +7,7 @@ setvbuf(stdout, nil, _IOLBF, 0)
 let args = Array(CommandLine.arguments.dropFirst())
 
 func usage() -> Never {
-    print("usage: callrec <watch|status|record|session|transcribe|relabel|install-agent|uninstall-agent|probe|tap-test|mic-test|selftest>")
+    print("usage: callrec <watch|status|record|session|transcribe|retranscribe|relabel|install-agent|uninstall-agent|probe|tap-test|mic-test|selftest>")
     exit(2)
 }
 
@@ -83,6 +83,10 @@ case "tap-test":
         FileHandle.standardError.write("tap-test failed: \(ns.localizedDescription) (domain \(ns.domain), OSStatus \(ns.code))\n".data(using: .utf8)!)
         exit(1)
     }
+
+case "retranscribe":
+    let result = Transcriber.retranscribe(target: args.count > 1 ? args[1] : nil, config: Config.load())
+    print("Re-transcribed \(result.done) call(s), skipped \(result.skipped).")
 
 case "relabel":
     let config = Config.load()

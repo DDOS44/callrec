@@ -18,7 +18,11 @@ public enum Transcriber {
             "-f", wav.path,
             "-l", config.language,
             "--prompt", config.prompt,
-            "-otxt", "-osrt", "-of", base, "-nt", "-t", "4"
+            // -mc 0 re-applies the prompt to every 30 s window. Without it the
+            // model drifts after the first window, usually into translated
+            // English. The rest keeps segments to about one sentence.
+            "-mc", "0", "-bs", "5", "-bo", "5", "-ml", "80", "-sow",
+            "-osrt", "-of", base, "-t", "4"
         ], timeout: 1800)
 
         guard result.status == 0 else {
@@ -33,7 +37,12 @@ public enum Transcriber {
             try? FileManager.default.removeItem(at: txtURL)
         }
         let srt = (try? String(contentsOf: srtURL, encoding: .utf8)) ?? ""
-        return parseSRT(srt)
+        // Whisper writes Hindi in Devanagari whatever we ask; convert it to the
+        // Roman Hinglish people actually read.
+        return parseSRT(srt).map {
+            Segment(start: $0.start, end: $0.end,
+                    text: Transliterate.devanagariToRoman($0.text), speaker: $0.speaker)
+        }
     }
 
     /// Parses whisper.cpp's .srt output into segments.
@@ -85,10 +94,76 @@ public enum Transcriber {
         if identity.isEmpty, !CallHistory.readable {
             print("[callrec] " + CallHistory.noAccessMessage)
         }
-        for scratch in [paths.mixWav, paths.farWav, paths.micWav] {
-            try? fm.removeItem(at: scratch)
-        }
+        // The two tracks stay: they are what makes a re-transcription possible.
+        try? fm.removeItem(at: paths.mixWav)
         return paths.md
+    }
+
+    /// Re-runs transcription for calls already on disk and rewrites only the
+    /// transcript, keeping outcome, notes and the identity fields.
+    public static func retranscribe(target: String?, config: Config) -> (done: Int, skipped: Int) {
+        let fm = FileManager.default
+        let root = config.recordingsURL
+        var done = 0, skipped = 0
+
+        let days: [String]
+        var onlyCall: String? = nil
+        if let target, target.contains("/") {
+            let parts = target.components(separatedBy: "/")
+            days = [parts[0]]
+            onlyCall = parts[1]
+        } else if let target, target.count == 10 {
+            days = [target]
+        } else if let target {
+            days = ((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).filter { $0.count == 10 }
+            onlyCall = target
+        } else {
+            days = ((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).filter { $0.count == 10 }
+        }
+
+        let stamp = DateFormatter(); stamp.dateFormat = "yyyy-MM-dd HH-mm-ss"
+        for day in days.sorted() {
+            let dir = root.appendingPathComponent(day)
+            let mds = ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? [])
+                .filter { $0.hasSuffix(".md") }.sorted()
+            for file in mds {
+                let base = String(file.dropLast(3))
+                if let onlyCall, base != onlyCall { continue }
+                let paths = RecordingPaths(dir: dir, base: base)
+                guard let existing = try? String(contentsOf: paths.md, encoding: .utf8) else { skipped += 1; continue }
+
+                var segments: [Segment] = []
+                do {
+                    if fm.fileExists(atPath: paths.farWav.path), fm.fileExists(atPath: paths.micWav.path) {
+                        let them = try transcribe(wav: paths.farWav, config: config)
+                        let me = try transcribe(wav: paths.micWav, config: config)
+                        let themRMS = (try? AudioLevels.perSecond(url: paths.farWav)) ?? []
+                        let meRMS = (try? AudioLevels.perSecond(url: paths.micWav)) ?? []
+                        segments = SpeakerMerge.merge(me: me, them: them, meRMS: meRMS, themRMS: themRMS, frameSeconds: 1)
+                    } else if fm.fileExists(atPath: paths.m4a.path) {
+                        // No tracks kept for this call: the mix is all there is,
+                        // so the lines come back without speaker labels.
+                        let wav = try toWhisperWav(paths.m4a)
+                        segments = try transcribe(wav: wav, config: config)
+                        try? fm.removeItem(at: wav)
+                    } else {
+                        skipped += 1
+                        continue
+                    }
+                } catch {
+                    print("[callrec] could not re-transcribe \(day)/\(base): \(error.localizedDescription)")
+                    skipped += 1
+                    continue
+                }
+
+                let updated = MarkdownFields.replaceTranscript(md: existing, with: segments)
+                try? updated.write(to: paths.md, atomically: true, encoding: .utf8)
+                _ = stamp.date(from: "\(day) \(base)")
+                done += 1
+                print("[callrec] re-transcribed \(day)/\(base) (\(segments.count) segments)")
+            }
+        }
+        return (done, skipped)
     }
 
     /// Converts any audio file to the 16 kHz mono wav whisper expects.
