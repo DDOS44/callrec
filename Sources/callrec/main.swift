@@ -77,6 +77,26 @@ case "tap-test":
         exit(1)
     }
 
+case "session":
+    guard #available(macOS 14.2, *) else {
+        print("callrec needs macOS 14.2 or newer.")
+        exit(1)
+    }
+    guard args.count >= 2, ["start", "stop"].contains(args[1]) else {
+        print("usage: callrec session <start|stop>")
+        exit(2)
+    }
+    do {
+        if args[1] == "start" {
+            try Session.start(config: Config.load())
+        } else {
+            try Session.stop()
+        }
+    } catch {
+        FileHandle.standardError.write("session failed: \(error.localizedDescription)\n".data(using: .utf8)!)
+        exit(1)
+    }
+
 case "watch":
     guard #available(macOS 14.2, *) else {
         print("callrec needs macOS 14.2 or newer.")

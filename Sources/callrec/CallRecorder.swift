@@ -19,10 +19,13 @@ final class CallRecorder: @unchecked Sendable {
     private var mic: MicRecorder?
     private var stopped = false
 
-    init(config: Config, startedAt: Date = Date()) throws {
+    /// `basePrefix` is used by session mode so the long session file can never
+    /// collide with the per-call files cut out of it.
+    init(config: Config, startedAt: Date = Date(), basePrefix: String = "") throws {
         self.config = config
         self.startedAt = startedAt
-        self.paths = Paths.forCall(at: startedAt, root: config.recordingsURL)
+        let base = Paths.forCall(at: startedAt, root: config.recordingsURL)
+        self.paths = basePrefix.isEmpty ? base : RecordingPaths(dir: base.dir, base: basePrefix + base.base)
     }
 
     func start() throws {
