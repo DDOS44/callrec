@@ -77,6 +77,51 @@ case "tap-test":
         exit(1)
     }
 
+case "record":
+    guard #available(macOS 14.2, *) else {
+        print("callrec needs macOS 14.2 or newer.")
+        exit(1)
+    }
+    AudioRecordingPermission.request()
+    var seconds: Double? = nil
+    if let i = args.firstIndex(of: "--seconds"), i + 1 < args.count { seconds = Double(args[i + 1]) }
+    do {
+        let config = Config.load()
+        let recorder = try CallRecorder(config: config)
+        try recorder.start()
+
+        let finish: () -> Never = {
+            do {
+                let result = try recorder.stop()
+                if result.kept {
+                    print("Saved \(result.paths.m4a.path)")
+                } else {
+                    print("Too short (\(Int(result.seconds))s), discarded")
+                }
+                exit(0)
+            } catch {
+                FileHandle.standardError.write("record failed: \(error.localizedDescription)\n".data(using: .utf8)!)
+                exit(1)
+            }
+        }
+
+        if let seconds {
+            print("Recording \(Int(seconds))s…")
+            Thread.sleep(forTimeInterval: seconds)
+            finish()
+        } else {
+            print("Recording… Ctrl-C to stop.")
+            signal(SIGINT, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+            source.setEventHandler { finish() }
+            source.resume()
+            dispatchMain()
+        }
+    } catch {
+        FileHandle.standardError.write("record failed: \(error.localizedDescription)\n".data(using: .utf8)!)
+        exit(1)
+    }
+
 case "mic-test":
     let micURL = URL(fileURLWithPath: "/tmp/callrec-mic-test.wav")
     do {
