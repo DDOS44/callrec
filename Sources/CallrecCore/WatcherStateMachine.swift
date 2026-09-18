@@ -2,28 +2,28 @@ import Foundation
 
 /// The pure decision logic behind `callrec watch`, separated so it can be tested
 /// without Core Audio or a live call.
-struct WatcherStateMachine {
+public struct WatcherStateMachine {
 
-    enum State: String, Codable {
+    public enum State: String, Codable {
         case idle, recording
     }
 
-    enum Action: Equatable {
+    public enum Action: Equatable {
         case none
         case startRecording
         case stopRecording
     }
 
-    let stopAfterSilentPolls: Int
-    private(set) var state: State = .idle
-    private(set) var consecutiveInactivePolls = 0
+    public let stopAfterSilentPolls: Int
+    public private(set) var state: State = .idle
+    public private(set) var consecutiveInactivePolls = 0
 
-    init(stopAfterSilentPolls: Int) {
+    public init(stopAfterSilentPolls: Int) {
         self.stopAfterSilentPolls = max(stopAfterSilentPolls, 1)
     }
 
     /// Feed one poll of "is the call process live right now".
-    mutating func poll(callActive: Bool) -> Action {
+    public mutating func poll(callActive: Bool) -> Action {
         switch state {
         case .idle:
             consecutiveInactivePolls = 0
@@ -45,12 +45,12 @@ struct WatcherStateMachine {
     }
 
     /// A recording that failed to start or stop puts us back to idle without exiting.
-    mutating func reset() {
+    public mutating func reset() {
         state = .idle
         consecutiveInactivePolls = 0
     }
 
-    static func callActive(in snapshot: [AudioProcessInfo], triggerBundleIDs: [String]) -> Bool {
+    public static func callActive(in snapshot: [AudioProcessInfo], triggerBundleIDs: [String]) -> Bool {
         snapshot.contains { triggerBundleIDs.contains($0.bundleID) && ($0.isRunningOutput || $0.isRunningInput) }
     }
 }

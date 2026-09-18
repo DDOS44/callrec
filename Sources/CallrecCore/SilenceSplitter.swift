@@ -1,9 +1,9 @@
 import Foundation
 
-enum SilenceSplitter {
+public enum SilenceSplitter {
     /// Given per-frame RMS values, returns the speech spans separated by gaps
     /// of at least `minGapSeconds`, dropping spans shorter than `minSpanSeconds`.
-    static func spans(rms: [Float], frameSeconds: Double, threshold: Float,
+    public static func spans(rms: [Float], frameSeconds: Double, threshold: Float,
                       minGapSeconds: Double, minSpanSeconds: Double) -> [(start: Double, end: Double)] {
         var out: [(Double, Double)] = []
         var spanStart: Int? = nil

@@ -1,17 +1,17 @@
 import AudioToolbox
 import Foundation
 
-struct RecordingResult {
-    let paths: RecordingPaths
-    let seconds: Double
-    let kept: Bool
+public struct RecordingResult {
+    public let paths: RecordingPaths
+    public let seconds: Double
+    public let kept: Bool
 }
 
 /// Runs the process tap (far side) and the microphone (near side) together,
 /// then merges them into one m4a plus a 16 kHz mono wav for transcription.
 @available(macOS 14.2, *)
-final class CallRecorder: @unchecked Sendable {
-    let paths: RecordingPaths
+public final class CallRecorder: @unchecked Sendable {
+    public let paths: RecordingPaths
     private let config: Config
     private let startedAt: Date
     private var tap: ProcessTap?
@@ -21,14 +21,14 @@ final class CallRecorder: @unchecked Sendable {
 
     /// `basePrefix` is used by session mode so the long session file can never
     /// collide with the per-call files cut out of it.
-    init(config: Config, startedAt: Date = Date(), basePrefix: String = "") throws {
+    public init(config: Config, startedAt: Date = Date(), basePrefix: String = "") throws {
         self.config = config
         self.startedAt = startedAt
         let base = Paths.forCall(at: startedAt, root: config.recordingsURL)
         self.paths = basePrefix.isEmpty ? base : RecordingPaths(dir: base.dir, base: basePrefix + base.base)
     }
 
-    func start() throws {
+    public func start() throws {
         try Paths.ensureDir(paths.dir)
 
         let tap = try ProcessTap(mode: .globalExcluding([]))
@@ -43,7 +43,7 @@ final class CallRecorder: @unchecked Sendable {
         self.mic = mic
     }
 
-    func stop() throws -> RecordingResult {
+    public func stop() throws -> RecordingResult {
         guard !stopped else { return RecordingResult(paths: paths, seconds: 0, kept: false) }
         stopped = true
 

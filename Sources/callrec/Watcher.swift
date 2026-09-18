@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import CallrecCore
 
 struct WatcherState: Codable {
     var state: String          // "idle" | "recording"

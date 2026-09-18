@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 /// Records the microphone (your side of the call) to a 16-bit PCM WAV.
-final class MicRecorder: @unchecked Sendable {
+public final class MicRecorder: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let url: URL
     private var file: AVAudioFile?
@@ -10,11 +10,11 @@ final class MicRecorder: @unchecked Sendable {
     private var monoFormat: AVAudioFormat?
     private var running = false
 
-    init(url: URL) throws {
+    public init(url: URL) throws {
         self.url = url
     }
 
-    func start() throws {
+    public func start() throws {
         guard !running else { return }
         let input = engine.inputNode
         let fmt = input.outputFormat(forBus: 0)
@@ -71,7 +71,7 @@ final class MicRecorder: @unchecked Sendable {
         return err == nil ? out : nil
     }
 
-    func stop() {
+    public func stop() {
         guard running else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()

@@ -6,9 +6,9 @@ import Foundation
 /// Core Audio process tap: captures what other processes are playing.
 /// Structure follows insidegui/AudioCap's ProcessTap.swift (MIT).
 @available(macOS 14.2, *)
-final class ProcessTap: @unchecked Sendable {
+public final class ProcessTap: @unchecked Sendable {
 
-    enum Mode {
+    public enum Mode {
         /// Global stereo tap of everything except the given processes.
         case globalExcluding([AudioObjectID])
     }
@@ -20,9 +20,9 @@ final class ProcessTap: @unchecked Sendable {
     private var started = false
     private let queue = DispatchQueue(label: "callrec.tap", qos: .userInitiated)
 
-    private(set) var format = AudioStreamBasicDescription()
+    public private(set) var format = AudioStreamBasicDescription()
 
-    init(mode: Mode) throws {
+    public init(mode: Mode) throws {
         self.mode = mode
         try prepare()
     }
@@ -67,7 +67,7 @@ final class ProcessTap: @unchecked Sendable {
     }
 
     /// onBuffer is called on a real-time audio thread. Keep it fast and allocation-free.
-    func start(onBuffer: @escaping (UnsafePointer<AudioBufferList>, UInt32) -> Void) throws {
+    public func start(onBuffer: @escaping (UnsafePointer<AudioBufferList>, UInt32) -> Void) throws {
         guard !started else { return }
         let bytesPerFrame = max(format.mBytesPerFrame, 1)
         var newProcID: AudioDeviceIOProcID?
@@ -81,7 +81,7 @@ final class ProcessTap: @unchecked Sendable {
         started = true
     }
 
-    func stop() {
+    public func stop() {
         if started {
             AudioDeviceStop(aggregateID, procID)
             started = false
@@ -134,11 +134,11 @@ final class ProcessTap: @unchecked Sendable {
 }
 
 /// Writes float buffers coming off a tap into a 16-bit PCM WAV file.
-final class WavWriter: @unchecked Sendable {
+public final class WavWriter: @unchecked Sendable {
     private var ref: ExtAudioFileRef?
     private let lock = NSLock()
 
-    init(url: URL, format: AudioStreamBasicDescription) throws {
+    public init(url: URL, format: AudioStreamBasicDescription) throws {
         var clientFormat = format
         let channels = max(format.mChannelsPerFrame, 1)
         var outFormat = AudioStreamBasicDescription(
@@ -160,13 +160,13 @@ final class WavWriter: @unchecked Sendable {
                                                              UInt32(MemoryLayout<AudioStreamBasicDescription>.size), &clientFormat))
     }
 
-    func write(_ abl: UnsafePointer<AudioBufferList>, frames: UInt32) {
+    public func write(_ abl: UnsafePointer<AudioBufferList>, frames: UInt32) {
         lock.lock(); defer { lock.unlock() }
         guard let ref else { return }
         ExtAudioFileWrite(ref, frames, abl)
     }
 
-    func close() {
+    public func close() {
         lock.lock(); defer { lock.unlock() }
         if let ref { ExtAudioFileDispose(ref) }
         ref = nil

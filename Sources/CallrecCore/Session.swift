@@ -4,11 +4,11 @@ import Foundation
 /// Manual fallback: record one long session, then cut it into separate calls
 /// on long silences and transcribe each piece.
 @available(macOS 14.2, *)
-enum Session {
+public enum Session {
 
-    static var pidURL: URL { Config.url.deletingLastPathComponent().appendingPathComponent("session.pid") }
+    public static var pidURL: URL { Config.url.deletingLastPathComponent().appendingPathComponent("session.pid") }
 
-    static func start(config: Config) throws -> Never {
+    public static func start(config: Config) throws -> Never {
         AudioRecordingPermission.request()
         let startedAt = Date()
         var sessionConfig = config
@@ -48,7 +48,7 @@ enum Session {
 
     nonisolated(unsafe) private static var sources: [DispatchSourceSignal] = []
 
-    static func stop() throws {
+    public static func stop() throws {
         guard let text = try? String(contentsOf: pidURL, encoding: .utf8),
               let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw NSError(domain: "callrec", code: 7, userInfo: [NSLocalizedDescriptionKey:
@@ -59,7 +59,7 @@ enum Session {
     }
 
     /// Cuts the session mix into one file per call and transcribes each.
-    static func split(result: RecordingResult, config: Config, sessionStart: Date) throws -> [URL] {
+    public static func split(result: RecordingResult, config: Config, sessionStart: Date) throws -> [URL] {
         let rms = try frameRMS(url: result.paths.mixWav)
         // The microphone is mixed in, so "silence" still carries room noise.
         // Scale the threshold to the loudest second instead of using a fixed floor.
@@ -104,7 +104,7 @@ enum Session {
     }
 
     /// One RMS value per second of the given wav.
-    static func frameRMS(url: URL) throws -> [Float] {
+    public static func frameRMS(url: URL) throws -> [Float] {
         let file = try AVAudioFile(forReading: url)
         let format = file.processingFormat
         let frames = AVAudioFrameCount(format.sampleRate)

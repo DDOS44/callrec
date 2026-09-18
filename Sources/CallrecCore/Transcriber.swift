@@ -1,8 +1,8 @@
 import Foundation
 
-enum Transcriber {
+public enum Transcriber {
 
-    static func transcribe(wav: URL, config: Config) throws -> [Segment] {
+    public static func transcribe(wav: URL, config: Config) throws -> [Segment] {
         guard let cli = Shell.which("whisper-cli") else {
             throw NSError(domain: "callrec", code: 5, userInfo: [NSLocalizedDescriptionKey:
                 "whisper-cli not found. Run: brew install whisper-cpp"])
@@ -37,7 +37,7 @@ enum Transcriber {
     }
 
     /// Parses whisper.cpp's .srt output into segments.
-    static func parseSRT(_ srt: String) -> [Segment] {
+    public static func parseSRT(_ srt: String) -> [Segment] {
         var segments: [Segment] = []
         for block in srt.components(separatedBy: "\n\n") {
             let lines = block.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
@@ -61,7 +61,7 @@ enum Transcriber {
 
     /// Transcribes a finished recording and writes the markdown next to it.
     @discardableResult
-    static func run(paths: RecordingPaths, seconds: Double, date: Date, config: Config) throws -> URL {
+    public static func run(paths: RecordingPaths, seconds: Double, date: Date, config: Config) throws -> URL {
         let segments = try transcribe(wav: paths.mixWav, config: config)
         let md = Markdown.render(date: date, seconds: seconds,
                                  audioName: paths.m4a.lastPathComponent, segments: segments)
@@ -71,7 +71,7 @@ enum Transcriber {
     }
 
     /// Converts any audio file to the 16 kHz mono wav whisper expects.
-    static func toWhisperWav(_ input: URL) throws -> URL {
+    public static func toWhisperWav(_ input: URL) throws -> URL {
         if input.pathExtension.lowercased() == "wav" { return input }
         guard let ffmpeg = Shell.which("ffmpeg") else {
             throw NSError(domain: "callrec", code: 4, userInfo: [NSLocalizedDescriptionKey:

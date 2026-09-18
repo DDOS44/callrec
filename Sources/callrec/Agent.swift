@@ -1,4 +1,5 @@
 import Foundation
+import CallrecCore
 
 /// The launchd agent that keeps `callrec watch` running in the background.
 enum Agent {

@@ -1,13 +1,17 @@
 import Foundation
 
-struct Segment {
-    let start: Double
-    let end: Double
-    let text: String
+public struct Segment {
+    public let start: Double
+    public let end: Double
+    public let text: String
+
+    public init(start: Double, end: Double, text: String) {
+        self.start = start; self.end = end; self.text = text
+    }
 }
 
-enum Markdown {
-    static func render(date: Date, seconds: Double, audioName: String, segments: [Segment]) -> String {
+public enum Markdown {
+    public static func render(date: Date, seconds: Double, audioName: String, segments: [Segment]) -> String {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm"
         let m = Int(seconds) / 60, s = Int(seconds) % 60
         var out = "# Call \(f.string(from: date))\n\n"

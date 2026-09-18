@@ -3,12 +3,14 @@ import Foundation
 
 /// Accumulates sum-of-squares from audio buffers on the audio thread and
 /// reports (and resets) the RMS when asked from another thread.
-final class RMSMeter: @unchecked Sendable {
+public final class RMSMeter: @unchecked Sendable {
     private let lock = NSLock()
     private var sumSquares: Double = 0
     private var count: Double = 0
 
-    func accumulate(_ abl: UnsafePointer<AudioBufferList>, frames: UInt32, format: AudioStreamBasicDescription) {
+    public init() {}
+
+    public func accumulate(_ abl: UnsafePointer<AudioBufferList>, frames: UInt32, format: AudioStreamBasicDescription) {
         guard format.mFormatFlags & kAudioFormatFlagIsFloat != 0, format.mBitsPerChannel == 32 else { return }
         var sum: Double = 0
         var n: Double = 0
@@ -30,7 +32,7 @@ final class RMSMeter: @unchecked Sendable {
         lock.unlock()
     }
 
-    func takeRMS() -> Double {
+    public func takeRMS() -> Double {
         lock.lock()
         let s = sumSquares, c = count
         sumSquares = 0; count = 0

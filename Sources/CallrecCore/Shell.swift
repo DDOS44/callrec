@@ -1,8 +1,8 @@
 import Foundation
 
-enum Shell {
+public enum Shell {
     @discardableResult
-    static func run(_ cmd: String, _ args: [String], timeout: TimeInterval = 600) throws -> (status: Int32, stdout: String, stderr: String) {
+    public static func run(_ cmd: String, _ args: [String], timeout: TimeInterval = 600) throws -> (status: Int32, stdout: String, stderr: String) {
         let p = Process(); p.executableURL = URL(fileURLWithPath: cmd); p.arguments = args
         let out = Pipe(), err = Pipe(); p.standardOutput = out; p.standardError = err
         try p.run()
@@ -17,7 +17,7 @@ enum Shell {
         return (p.terminationStatus, o, e)
     }
 
-    static func which(_ name: String) -> String? {
+    public static func which(_ name: String) -> String? {
         for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
             let p = dir + "/" + name
             if FileManager.default.isExecutableFile(atPath: p) { return p }

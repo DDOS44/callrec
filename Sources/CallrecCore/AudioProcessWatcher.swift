@@ -1,16 +1,24 @@
 import CoreAudio
 import Foundation
 
-struct AudioProcessInfo {
-    let objectID: AudioObjectID
-    let pid: pid_t
-    let bundleID: String
-    let isRunningOutput: Bool
-    let isRunningInput: Bool
+public struct AudioProcessInfo {
+    public let objectID: AudioObjectID
+    public let pid: pid_t
+    public let bundleID: String
+    public let isRunningOutput: Bool
+    public let isRunningInput: Bool
+
+    public init(objectID: AudioObjectID, pid: pid_t, bundleID: String, isRunningOutput: Bool, isRunningInput: Bool) {
+        self.objectID = objectID
+        self.pid = pid
+        self.bundleID = bundleID
+        self.isRunningOutput = isRunningOutput
+        self.isRunningInput = isRunningInput
+    }
 }
 
-enum AudioProcessWatcher {
-    static func snapshot() throws -> [AudioProcessInfo] {
+public enum AudioProcessWatcher {
+    public static func snapshot() throws -> [AudioProcessInfo] {
         var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
                                               mScope: kAudioObjectPropertyScopeGlobal,
                                               mElement: kAudioObjectPropertyElementMain)
@@ -46,7 +54,7 @@ enum AudioProcessWatcher {
         return v?.takeRetainedValue() as String? ?? ""
     }
 
-    static func check(_ s: OSStatus) throws {
+    public static func check(_ s: OSStatus) throws {
         if s != noErr {
             throw NSError(domain: "CoreAudio", code: Int(s), userInfo: [NSLocalizedDescriptionKey: "CoreAudio error \(s)"])
         }

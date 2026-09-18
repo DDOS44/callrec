@@ -2,9 +2,9 @@ import Foundation
 
 /// Checks and requests system-audio recording permission via the private TCC SPI.
 /// Mirrors insidegui/AudioCap's AudioRecordingPermission.swift (MIT).
-enum AudioRecordingPermission {
+public enum AudioRecordingPermission {
 
-    enum Status: String {
+    public enum Status: String {
         case unknown, denied, authorized
     }
 
@@ -26,7 +26,7 @@ enum AudioRecordingPermission {
         return unsafeBitCast(sym, to: RequestFuncType.self)
     }()
 
-    static var status: Status {
+    public static var status: Status {
         guard let preflightSPI else { return .unknown }
         switch preflightSPI(service, nil) {
         case 0: return .authorized
@@ -38,7 +38,7 @@ enum AudioRecordingPermission {
     /// Triggers the system prompt if permission has not been decided yet.
     /// Blocks for up to `timeout` seconds waiting for the user to answer.
     @discardableResult
-    static func request(timeout: TimeInterval = 60) -> Status {
+    public static func request(timeout: TimeInterval = 60) -> Status {
         if status == .authorized { return .authorized }
         guard let requestSPI else { return status }
         let sem = DispatchSemaphore(value: 0)
@@ -47,5 +47,5 @@ enum AudioRecordingPermission {
         return status
     }
 
-    static let deniedMessage = "No system-audio permission. Open System Settings -> Privacy & Security -> Screen & System Audio Recording and enable this app (or Terminal), then rerun."
+    public static let deniedMessage = "No system-audio permission. Open System Settings -> Privacy & Security -> Screen & System Audio Recording and enable this app (or Terminal), then rerun."
 }
