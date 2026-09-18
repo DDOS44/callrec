@@ -40,6 +40,17 @@ else
   export PATH="$HOME/.callrec/bin:$PATH"
 fi
 
+say "Installing the callrec app"
+appdir="/Applications"; [ -w "$appdir" ] || appdir="$HOME/Applications"; mkdir -p "$appdir"
+if [ -n "${tag:-}" ] && curl -fsSL -o "$HOME/.callrec/callrec.app.zip" "https://github.com/DDOS44/callrec/releases/download/$tag/callrec.app.zip"; then
+  rm -rf "$appdir/callrec.app"
+  ditto -x -k "$HOME/.callrec/callrec.app.zip" "$appdir"
+  xattr -dr com.apple.quarantine "$appdir/callrec.app" 2>/dev/null || true
+  rm -f "$HOME/.callrec/callrec.app.zip"
+elif [ -d "${tmp:-/nonexistent}" ]; then
+  (cd "$tmp" && ./scripts/make-app.sh >/dev/null 2>&1) && rm -rf "$appdir/callrec.app" && cp -R "$tmp/build/callrec.app" "$appdir/"
+fi
+
 curl -fsSL -o "$HOME/.callrec/download-model.sh" https://raw.githubusercontent.com/DDOS44/callrec/main/scripts/download-model.sh
 chmod +x "$HOME/.callrec/download-model.sh"
 say "Downloading the transcription model (~1.6 GB, one time)"
@@ -53,4 +64,6 @@ echo "1. System Settings -> Privacy & Security -> Screen & System Audio Recordin
 echo "2. System Settings -> Privacy & Security -> Microphone -> turn on callrec"
 echo "Then run: callrec uninstall-agent && callrec install-agent"
 echo
-echo "Recordings and transcripts go to ~/CallRecordings. Check anytime with: callrec status"
+echo "Recordings and transcripts go to ~/CallRecordings."
+echo "Open the callrec app from Applications, or click the phone icon in the menu bar."
+[ -d "$appdir/callrec.app" ] && open "$appdir/callrec.app" || true

@@ -31,12 +31,20 @@ callrec uninstall-agent && callrec install-agent
 
 That is the whole setup. It starts itself every time you log in.
 
+### The app
+
+Open **callrec** from Applications, or click the **phone icon in the menu bar**. That is where you
+read calls: a day list on the left, that day's calls in the middle, and the selected call on the
+right with audio, transcript, outcome buttons and notes. The menu bar icon turns red while a call
+is recording.
+
 ## Your first call
 
 Take a call on your Mac the way you normally do (iPhone calls ring on the Mac when both are on
 the same Apple ID). Talk. Hang up.
 
-About a minute later two files appear in **`~/CallRecordings/`**, in a folder for today's date:
+About a minute later the call shows up in the callrec app, and two files appear in
+**`~/CallRecordings/`**, in a folder for today's date:
 
 - `14-02-00.m4a` — the recording, both sides
 - `14-02-00.md` — the transcript
@@ -73,7 +81,13 @@ not in Devanagari, and not translated into English.
 The empty fields are for you. After each call, fill in **outcome** and **who picked up**, and put
 anything surprising under **Notes**. Takes twenty seconds and makes the file worth re-reading later.
 
+Easiest way is in the app: pick the call, click an outcome button, type the name and your notes,
+hit Save. It writes those three fields back into the same `.md` and never touches the transcript.
+
 ## Check that it is working
+
+The app shows an orange banner at the top if the recorder is off or a permission is missing, with a
+button that opens the right settings pane. In Terminal you can also run:
 
 ```
 callrec status
@@ -125,11 +139,15 @@ callrec uninstall-agent
 rm -rf ~/.callrec
 ```
 
+Then drag **callrec** from Applications to the Bin.
+
 Your recordings in `~/CallRecordings/` are left alone. Delete that folder too if you want them gone.
 
 ## For developers
 
-Swift package, no dependencies. `swift build -c release`, then `.build/release/callrec selftest`
-runs the pure-logic checks. Architecture and the build plan are in `docs/`.
+Swift package, no dependencies: `CallrecCore` (shared), `callrec` (CLI, does the recording),
+`CallrecApp` (SwiftUI app). `swift build -c release`, then `.build/release/callrec selftest` runs
+the pure-logic checks. `./scripts/make-app.sh` wraps the binaries into `build/callrec.app` - no
+Xcode needed. Architecture and the build plan are in `docs/`.
 
 MIT licensed.

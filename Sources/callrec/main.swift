@@ -44,9 +44,13 @@ case "tap-test":
     let outURL = URL(fileURLWithPath: "/tmp/callrec-tap-test.wav")
     do {
         let tap = try ProcessTap(mode: .globalExcluding([]))
-        let fmt = tap.format
-        print("Tap format: \(fmt.mSampleRate) Hz, \(fmt.mChannelsPerFrame) ch, \(fmt.mBitsPerChannel)-bit")
-        let writer = try WavWriter(url: outURL, format: fmt)
+        let fmt = (try? tap.liveFormat()) ?? tap.format
+        print("Rates: \(tap.diagnostics)")
+        let writer = try TapWavWriter(url: outURL, sourceFormat: fmt)
+        tap.onFormatChange = { [weak writer] new in
+            print(String(format: "device changed to %.0f Hz mid-recording", new.mSampleRate))
+            writer?.setSource(new)
+        }
 
         let meter = RMSMeter()
         try tap.start { abl, frames in

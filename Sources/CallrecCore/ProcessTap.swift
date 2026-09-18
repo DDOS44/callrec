@@ -22,6 +22,12 @@ public final class ProcessTap: @unchecked Sendable {
 
     public private(set) var format = AudioStreamBasicDescription()
 
+    /// Called on the audio thread's queue when the device's sample rate changes
+    /// mid-recording. During a phone call the output device drops into a voice
+    /// mode at 8/16/24 kHz, which is what broke early recordings.
+    public var onFormatChange: ((AudioStreamBasicDescription) -> Void)?
+    private var rateListener: AudioObjectPropertyListenerBlock?
+
     public init(mode: Mode) throws {
         self.mode = mode
         try prepare()
@@ -64,6 +70,76 @@ public final class ProcessTap: @unchecked Sendable {
         var newAggregate = AudioObjectID(kAudioObjectUnknown)
         try AudioProcessWatcher.check(AudioHardwareCreateAggregateDevice(description as CFDictionary, &newAggregate))
         aggregateID = newAggregate
+
+        // The tap's advertised format is not always what the IOProc delivers:
+        // prefer the aggregate's own input stream format.
+        if let live = try? liveFormat() { format = live }
+        watchSampleRate()
+    }
+
+    /// The format the IOProc actually delivers.
+    ///
+    /// The stream format's channel layout is right but its sample rate is not:
+    /// during a call the aggregate keeps advertising 48 kHz while its nominal
+    /// rate (and the real frame rate) drops to 16 kHz or lower. The nominal
+    /// rate wins.
+    public func liveFormat() throws -> AudioStreamBasicDescription {
+        var asbd = try inputStreamFormat()
+        let nominal = nominalSampleRate(of: aggregateID)
+        if nominal > 0, abs(nominal - asbd.mSampleRate) > 1 {
+            asbd.mSampleRate = nominal
+        }
+        return asbd
+    }
+
+    public func inputStreamFormat() throws -> AudioStreamBasicDescription {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamFormat,
+                                              mScope: kAudioObjectPropertyScopeInput,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var asbd = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        try AudioProcessWatcher.check(AudioObjectGetPropertyData(aggregateID, &addr, 0, nil, &size, &asbd))
+        return asbd
+    }
+
+    public func nominalSampleRate(of device: AudioObjectID) -> Double {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyNominalSampleRate,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var rate: Double = 0
+        var size = UInt32(MemoryLayout<Double>.size)
+        guard AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &rate) == noErr else { return 0 }
+        return rate
+    }
+
+    /// tap format, aggregate nominal rate, aggregate input stream format, default output rate.
+    public var diagnostics: String {
+        let tapFormat = (try? readTapFormat(tapID)) ?? AudioStreamBasicDescription()
+        let live = (try? inputStreamFormat()) ?? AudioStreamBasicDescription()
+        var outputID = AudioObjectID(kAudioObjectUnknown)
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        _ = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &outputID)
+        return String(format: "tap %.0f Hz/%uch, aggregate nominal %.0f Hz, aggregate stream %.0f Hz/%uch, output device %.0f Hz",
+                      tapFormat.mSampleRate, tapFormat.mChannelsPerFrame,
+                      nominalSampleRate(of: aggregateID),
+                      live.mSampleRate, live.mChannelsPerFrame,
+                      nominalSampleRate(of: outputID))
+    }
+
+    private func watchSampleRate() {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyNominalSampleRate,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self, let live = try? self.liveFormat() else { return }
+            self.format = live
+            self.onFormatChange?(live)
+        }
+        rateListener = block
+        _ = AudioObjectAddPropertyListenerBlock(aggregateID, &addr, queue, block)
     }
 
     /// onBuffer is called on a real-time audio thread. Keep it fast and allocation-free.
@@ -82,6 +158,14 @@ public final class ProcessTap: @unchecked Sendable {
     }
 
     public func stop() {
+        if var addr = rateListener == nil ? nil : AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain),
+           let block = rateListener, aggregateID != AudioObjectID(kAudioObjectUnknown) {
+            AudioObjectRemovePropertyListenerBlock(aggregateID, &addr, queue, block)
+            rateListener = nil
+        }
         if started {
             AudioDeviceStop(aggregateID, procID)
             started = false

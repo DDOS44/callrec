@@ -1,6 +1,11 @@
 import AudioToolbox
 import Foundation
 
+/// Recording diagnostics go to stdout, which launchd sends to ~/.callrec/callrec.log.
+func log(_ message: String) {
+    print("[callrec] \(message)")
+}
+
 public struct RecordingResult {
     public let paths: RecordingPaths
     public let seconds: Double
@@ -15,7 +20,7 @@ public final class CallRecorder: @unchecked Sendable {
     private let config: Config
     private let startedAt: Date
     private var tap: ProcessTap?
-    private var writer: WavWriter?
+    private var writer: TapWavWriter?
     private var mic: MicRecorder?
     private var stopped = false
 
@@ -32,8 +37,13 @@ public final class CallRecorder: @unchecked Sendable {
         try Paths.ensureDir(paths.dir)
 
         let tap = try ProcessTap(mode: .globalExcluding([]))
-        let fmt = tap.format
-        let writer = try WavWriter(url: paths.farWav, format: fmt)
+        let fmt = (try? tap.liveFormat()) ?? tap.format
+        log("tap rates at start: \(tap.diagnostics)")
+        let writer = try TapWavWriter(url: paths.farWav, sourceFormat: fmt)
+        tap.onFormatChange = { [weak writer] newFormat in
+            log(String(format: "device changed to %.0f Hz mid-call, converter updated", newFormat.mSampleRate))
+            writer?.setSource(newFormat)
+        }
         try tap.start { abl, frames in writer.write(abl, frames: frames) }
         self.tap = tap
         self.writer = writer
@@ -43,14 +53,20 @@ public final class CallRecorder: @unchecked Sendable {
         self.mic = mic
     }
 
+    private var farSeconds: Double?
+
     public func stop() throws -> RecordingResult {
         guard !stopped else { return RecordingResult(paths: paths, seconds: 0, kept: false) }
         stopped = true
 
+        farSeconds = writer?.secondsWritten
         tap?.stop(); writer?.close(); mic?.stop()
         tap = nil; writer = nil; mic = nil
 
         let seconds = Date().timeIntervalSince(startedAt)
+        if let far = farSeconds, seconds > 2 {
+            log(String(format: "far side captured %.1fs of audio over %.1fs of call (%.2fx)", far, seconds, far / seconds))
+        }
         let fm = FileManager.default
 
         if seconds < Double(config.minCallSeconds) {
@@ -66,6 +82,7 @@ public final class CallRecorder: @unchecked Sendable {
 
         let mix = try Shell.run(ffmpeg, [
             "-y", "-i", paths.farWav.path, "-i", paths.micWav.path,
+            // The tap file is already 16 kHz mono; the mic is at its own rate.
             "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0,aresample=16000",
             "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", paths.mixWav.path
         ])
