@@ -77,6 +77,20 @@ case "tap-test":
         exit(1)
     }
 
+case "mic-test":
+    let micURL = URL(fileURLWithPath: "/tmp/callrec-mic-test.wav")
+    do {
+        let mic = try MicRecorder(url: micURL)
+        try mic.start()
+        print("Recording the microphone for 5 s to \(micURL.path). Say something.")
+        Thread.sleep(forTimeInterval: 5)
+        mic.stop()
+        print("Wrote \(micURL.path)")
+    } catch {
+        FileHandle.standardError.write("mic-test failed: \(error.localizedDescription)\n".data(using: .utf8)!)
+        exit(1)
+    }
+
 case "selftest":
     let failures = SelfTest.runAll()
     if failures.isEmpty {
