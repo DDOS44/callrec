@@ -29,6 +29,7 @@ public final class MicRecorder: @unchecked Sendable {
     private var configObserver: NSObjectProtocol?
     private var defaultInputListener: AudioObjectPropertyListenerBlock?
     private var reconfigurations = 0
+    private var loggedChannels = false
 
     public init(url: URL) throws {
         self.url = url
@@ -85,11 +86,16 @@ public final class MicRecorder: @unchecked Sendable {
             throw NSError(domain: "callrec", code: 2, userInfo: [NSLocalizedDescriptionKey:
                 "No microphone input available. Check System Settings -> Privacy & Security -> Microphone."])
         }
-        guard let target, let conv = AVAudioConverter(from: fmt, to: target) else {
+        // Convert from MONO at the input's rate: channel reduction is done by
+        // Downmix.activeAverage in write(), never by AVAudioConverter (which kept a
+        // silent channel of the 3-channel in-call mic array).
+        guard let target,
+              let inMono = AVAudioFormat(standardFormatWithSampleRate: fmt.sampleRate, channels: 1),
+              let conv = AVAudioConverter(from: inMono, to: target) else {
             throw NSError(domain: "callrec", code: 3, userInfo: [NSLocalizedDescriptionKey:
                 "Could not convert the microphone (\(fmt.sampleRate) Hz, \(fmt.channelCount) ch) to 16 kHz mono."])
         }
-        lock.lock(); converter = conv; lock.unlock()
+        lock.lock(); converter = conv; loggedChannels = false; lock.unlock()
 
         input.installTap(onBus: 0, bufferSize: 4096, format: fmt) { [weak self] buf, when in
             self?.write(buf, at: when)
@@ -118,7 +124,8 @@ public final class MicRecorder: @unchecked Sendable {
         let host = when.isHostTimeValid ? when.hostTime : Clock.nowHost
         padSilence(upTo: host, file: file, format: target)
 
-        let ratio = target.sampleRate / buf.format.sampleRate
+        guard let mono = toMono(buf) else { return }
+        let ratio = target.sampleRate / mono.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buf.frameLength) * ratio) + 1024
         guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
         // The converter pulls synchronously, on this thread, before convert() returns.
@@ -128,7 +135,7 @@ public final class MicRecorder: @unchecked Sendable {
             if supplied { status.pointee = .noDataNow; return nil }
             supplied = true
             status.pointee = .haveData
-            return buf
+            return mono
         }
         if let err {
             logError("[mic] conversion failed: \(err.localizedDescription)", .capture)
@@ -140,6 +147,38 @@ public final class MicRecorder: @unchecked Sendable {
         } catch {
             logError("[mic] write failed: \(error.localizedDescription)", .capture)
         }
+    }
+
+    /// Any input → mono float at the input's rate, averaging only channels that carry
+    /// signal. Logs once per (re)attach which channels were live.
+    private func toMono(_ buf: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let n = Int(buf.frameLength)
+        let chans = Int(buf.format.channelCount)
+        guard let monoFmt = AVAudioFormat(standardFormatWithSampleRate: buf.format.sampleRate, channels: 1),
+              let out = AVAudioPCMBuffer(pcmFormat: monoFmt, frameCapacity: buf.frameLength),
+              let dst = out.floatChannelData?[0] else { return nil }
+        out.frameLength = buf.frameLength
+        guard let src = buf.floatChannelData else {
+            logError("[mic] unsupported input sample format (\(buf.format)); your side may be missing", .capture)
+            return nil
+        }
+        if chans == 1 {
+            memcpy(dst, src[0], n * MemoryLayout<Float>.size)
+            return out
+        }
+        let stride = buf.format.isInterleaved ? chans : 1
+        var channels: [[Float]] = []
+        for c in 0..<chans {
+            let base = buf.format.isInterleaved ? src[0] + c : src[c]
+            channels.append((0..<n).map { base[$0 * stride] })
+        }
+        let mixed = Downmix.activeAverage(channels)
+        for i in 0..<n { dst[i] = mixed[i] }
+        if !loggedChannels {
+            loggedChannels = true
+            log("[mic] \(chans)-channel input; channels carrying sound: \(Downmix.activeChannels(channels))", .capture)
+        }
+        return out
     }
 
     /// Fill any gap between what's written and `host` with silence, so the mic
