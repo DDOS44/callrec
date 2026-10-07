@@ -5,6 +5,7 @@ import SwiftUI
 @main
 struct CallrecAppMain: App {
     @StateObject private var model: AppModel
+    @StateObject private var dialer = DialerModel()
 
     init() {
         Permissions.lockDownProcess()
@@ -13,7 +14,7 @@ struct CallrecAppMain: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView().environmentObject(model)
+            ContentView().environmentObject(model).environmentObject(dialer)
         }
         .defaultSize(width: 1180, height: 720)
         .commands {

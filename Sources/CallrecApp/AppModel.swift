@@ -70,7 +70,7 @@ final class AppModel: ObservableObject {
         let previous = selectedCall
         days = loaded
         lastCallAt = loaded.first?.calls.first?.date
-        if selectedDay == nil || !days.contains(where: { $0.name == selectedDay }) {
+        if selectedDay == nil || !(days.contains(where: { $0.name == selectedDay }) || selectedDay == AppModel.dialerTag) {
             selectedDay = days.first?.name
         }
         if previous == nil || !allCalls.contains(where: { $0.id == previous }) {
@@ -88,6 +88,7 @@ final class AppModel: ObservableObject {
     }
 
     static let allDaysTag = "__all__"
+    static let dialerTag = "__dialer__"
 
     var allCalls: [Call] { days.flatMap(\.calls) }
 
