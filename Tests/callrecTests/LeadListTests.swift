@@ -8,10 +8,10 @@ private func csv(_ rows: [String], header h: String = header) -> String { ([h] +
 
 @Test func importReadsEveryFieldAndOrdersByConfidence() throws {
     let text = csv([
-        "Fake Staffing A,+91 90000 00001,Delhi,Asha Test,IT hiring,Ask about volume,low,,Devansh",
-        "Fake Staffing B,9000000002,Noida,Ravi Test,Blue collar,Referral angle,HIGH,9000000012,Devansh",
-        "Fake Staffing C,09000000003,Gurgaon,,Exec search,,medium,,Devansh",
-        "Fake Staffing D,9000000004,,,,,high,,Devansh"
+        "Fake Staffing A,+91 90000 00001,Delhi,Asha Test,IT hiring,Ask about volume,low,,Alex",
+        "Fake Staffing B,9000000002,Noida,Ravi Test,Blue collar,Referral angle,HIGH,9000000012,Alex",
+        "Fake Staffing C,09000000003,Gurgaon,,Exec search,,medium,,Alex",
+        "Fake Staffing D,9000000004,,,,,high,,Alex"
     ])
     let r = try LeadImporter.parse(text)
     equal(r.leads.count, 4, "import.count")
@@ -69,20 +69,20 @@ private func csv(_ rows: [String], header h: String = header) -> String { ([h] +
 
 @Test func callerFilterKeepsOnlyMatchingRowsAndCountsTheRest() throws {
     let text = csv([
-        "A,9000000001,,,,,high,,Devansh",
-        "B,9000000002,,,,,high,,Anurag",
-        "C,9000000003,,,,,high,,devansh ",
+        "A,9000000001,,,,,high,,Alex",
+        "B,9000000002,,,,,high,,Sam",
+        "C,9000000003,,,,,high,,alex ",
         "D,9000000004,,,,,high,,",
-        "Bad,12,,,,,high,,Anurag"
+        "Bad,12,,,,,high,,Sam"
     ])
-    let r = try LeadImporter.parse(text, caller: "Devansh")
+    let r = try LeadImporter.parse(text, caller: "Alex")
     equal(r.leads.map(\.company), ["A", "C"], "caller.kept")
     // Someone else's row is not this caller's problem, even when its number is bad.
     equal(r.filteredOut, 3, "caller.filtered")
     equal(r.rejected.count, 0, "caller.noRejects")
     equal(r.accountedRows, 5, "caller.accounted")
     // No caller column: nothing can be filtered, every row stays.
-    let noCol = try LeadImporter.parse("company,phone\nA,9000000001\n", caller: "Devansh")
+    let noCol = try LeadImporter.parse("company,phone\nA,9000000001\n", caller: "Alex")
     equal(noCol.leads.count, 1, "caller.noColumnKeepsAll")
 }
 

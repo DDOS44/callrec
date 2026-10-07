@@ -51,7 +51,7 @@ actor Engine {
         results.flatMap(\.segments).map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined(separator: " ")
     }
 
-    /// "Devansh, Blaxify." from a vocabulary list; nil when empty. Pure, for tests.
+    /// "Rahul, Acme." from a vocabulary list; nil when empty. Pure, for tests.
     static func prompt(_ vocabulary: [String]) -> String? {
         let words = vocabulary.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         return words.isEmpty ? nil : words.joined(separator: ", ") + "."
