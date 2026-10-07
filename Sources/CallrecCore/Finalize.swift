@@ -11,6 +11,12 @@ import Foundation
 ///
 /// Rule: a raw file is only deleted after the file made from it has been checked.
 public enum Finalize {
+    /// Loudness-match both sides, mix, limit. Exposed for tests.
+    public static let mixFilter =
+        "[0:a]loudnorm=I=-20:TP=-2:LRA=11,aresample=16000[a];" +
+        "[1:a]loudnorm=I=-20:TP=-2:LRA=11,aresample=16000[b];" +
+        "[a][b]amix=inputs=2:normalize=0,alimiter=limit=0.95,aresample=16000"
+
 
     static func ffmpeg() throws -> String {
         guard let path = Shell.which("ffmpeg") else {
@@ -82,8 +88,11 @@ public enum Finalize {
         var args = ["-y"]
         for t in tracks { args += ["-i", t.path] }
         if tracks.count == 2 {
-            // Both tracks are 16 kHz mono and already the same length.
-            args += ["-filter_complex", "[0:a][1:a]amix=inputs=2:normalize=0,aresample=16000"]
+            // Both tracks are 16 kHz mono and already the same length. Bring each
+            // side to the same loudness before mixing: in-call mic voice processing
+            // left "Me" ~23 dB below "Them", inaudible on playback (2026-10-07).
+            // Playback mix only; the raw tracks (and transcription) are untouched.
+            args += ["-filter_complex", Finalize.mixFilter]
         }
         args += ["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", paths.mixWav.path]
         let mix = try Shell.run(tool, args)

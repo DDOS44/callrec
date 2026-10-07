@@ -165,6 +165,8 @@ final class AppModel: ObservableObject {
     /// Health comes from the launchd job and the watcher's own state file.
     /// The app never checks its own audio permission: recording is done by a
     /// separate binary, which has its own grants.
+    private var lastStateSignature: String?
+
     func refreshStatus() {
         guard !statusInFlight else { return }
         statusInFlight = true
@@ -192,6 +194,14 @@ final class AppModel: ObservableObject {
         modelError = state?.modelError
         permissionProblems = state?.permissionProblems ?? []
         if transcribingID != state?.transcribing { transcribingID = state?.transcribing }
+        // The daemon rewrites state.json whenever a call starts, ends, or finishes
+        // transcribing. Reload on any change, so a new transcript shows up even if the
+        // folder watcher missed the write (2026-10-07: list showed "Not transcribed yet"
+        // after the .md existed).
+        let signature = [state?.state, state?.since, state?.transcribing, state?.lastCall]
+            .map { $0 ?? "-" }.joined(separator: "|")
+        if let lastStateSignature, lastStateSignature != signature { reload() }
+        lastStateSignature = signature
         if let history {
             checkedCallHistory = true
             callHistoryReadable = history
