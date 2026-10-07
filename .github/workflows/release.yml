@@ -1,0 +1,43 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      # Minimal rule set plus the try? ban (.swiftlint.yml). --strict makes warnings fail.
+      - name: Lint
+        run: |
+          brew install swiftlint
+          swiftlint --strict
+      # `swift test` is a false green without Xcode (it runs nothing), so the gate
+      # is scripts/test.sh, which fails on any failing test or on zero tests.
+      - name: Install ffmpeg (the recovery tests use it)
+        run: brew install ffmpeg
+      - name: Run tests
+        run: ./scripts/test.sh
+      - name: Build release binary
+        run: swift build -c release --arch arm64
+      - name: Stage binary
+        run: cp .build/release/callrec callrec-arm64
+      - name: Build the app bundle
+        run: ./scripts/make-app.sh
+      - name: Zip the app
+        run: ditto -c -k --sequesterRsrc --keepParent build/callrec.app callrec.app.zip
+      # install.sh refuses to install anything that does not match this file.
+      - name: Write SHA256SUMS
+        run: |
+          cp scripts/download-model.sh scripts/model-manifest.txt .
+          shasum -a 256 callrec-arm64 callrec.app.zip download-model.sh model-manifest.txt > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" callrec-arm64 callrec.app.zip download-model.sh model-manifest.txt SHA256SUMS --generate-notes

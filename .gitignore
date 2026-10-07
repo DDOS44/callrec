@@ -1,0 +1,10 @@
+.build/
+*.wav
+*.m4a
+models/
+.DS_Store
+build/
+
+# Private working notes and research: kept locally, never published (they quote real calls).
+decisions/
+docs/

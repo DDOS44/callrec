@@ -1,0 +1,23 @@
+# Minimal on purpose: the default rule set gave 375 findings, mostly style noise.
+# The point of this config is the `try?` ban (docs/app-craft-research.md, finding 2):
+# a swallowed error is how the failure reporter itself failed silently.
+only_rules:
+  - force_cast
+  - force_try
+  - unused_closure_parameter
+  - unused_optional_binding
+  - empty_xctest_method
+  - custom_rules
+
+# Tests may use try? for throwaway fixture setup; production code may not.
+included:
+  - Sources
+
+custom_rules:
+  no_try_optional:
+    name: "No try?"
+    regex: '\btry\?'
+    match_kinds:
+      - keyword
+    message: "try? swallows the error. Use do/catch with a logged error, or keep it with `// swiftlint:disable:next no_try_optional` and a one-line reason."
+    severity: error
