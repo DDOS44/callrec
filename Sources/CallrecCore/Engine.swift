@@ -16,6 +16,32 @@ actor Engine {
 
     /// Fewer than ~3 characters per second of detected speech means the model
     /// skipped most of it (Hinglish speech runs ~10-15 chars/s). Pure, for tests.
+    static let untranscribedText = "(speech here couldn't be transcribed — listen to the audio)"
+
+    /// Unprompted retries (temperature fallback is random, so a second try often
+    /// lands), then the region in two halves. Returns empty only if all fail.
+    private func rescue(clip: [Float], region r: SpeechRegion, kit: WhisperKit,
+                        config: Config, debug: Bool) async throws -> [TranscriptionResult] {
+        var plain = DecodingOptions()
+        plain.task = .transcribe
+        plain.language = config.language
+        plain.detectLanguage = false
+        plain.skipSpecialTokens = true
+        plain.noSpeechThreshold = nil
+        for attempt in 1...2 {
+            let res = try await kit.transcribe(audioArray: clip, decodeOptions: plain)
+            if debug { print(String(format: "[debug] rescue %.1f-%.1f attempt %d: %d chars", r.start, r.end, attempt, Self.text(of: res).count)) }
+            if !Self.text(of: res).isEmpty { return res }
+        }
+        let mid = clip.count / 2
+        var halves: [TranscriptionResult] = []
+        for part in [Array(clip[..<mid]), Array(clip[mid...])] {
+            halves += try await kit.transcribe(audioArray: part, decodeOptions: plain)
+        }
+        if debug { print(String(format: "[debug] rescue %.1f-%.1f halves: %d chars", r.start, r.end, Self.text(of: halves).count)) }
+        return halves
+    }
+
     static func looksTruncated(chars: Int, speechSeconds: Double) -> Bool {
         guard speechSeconds >= 1.5 else { return false }
         return Double(chars) < 3.0 * speechSeconds
@@ -60,6 +86,10 @@ actor Engine {
         options.language = config.language
         options.detectLanguage = false
         options.skipSpecialTokens = true
+        // VAD already decided this is speech. Whisper's own "no speech" check
+        // discarded whole regions of fast Hinglish at random (same audio: empty on
+        // one run, 216 chars on the next). Don't let the model second-guess VAD.
+        options.noSpeechThreshold = nil
         if let prompt = Self.prompt(config.vocabulary), let tok = kit.tokenizer {
             // Bias spelling of names/brands. VAD already keeps silence away from the
             // model, which is where a prompt would otherwise get hallucinated back.
@@ -96,6 +126,7 @@ actor Engine {
                     plain.language = config.language
                     plain.detectLanguage = false
                     plain.skipSpecialTokens = true
+                    plain.noSpeechThreshold = nil
                     let retry = try await kit.transcribe(audioArray: clip, decodeOptions: plain)
                     if debug {
                         print(String(format: "[debug] retry %.1f-%.1f prompted=%d unprompted=%d", r.start, r.end,
@@ -107,6 +138,17 @@ actor Engine {
                         results = retry
                     }
                 }
+            }
+            if Self.text(of: results).isEmpty, r.length >= 1.5 {
+                results = try await rescue(clip: clip, region: r, kit: kit, config: config, debug: debug)
+            }
+            if Self.text(of: results).isEmpty, r.length >= 1.5 {
+                // Fail loudly: VAD heard speech here and the model produced nothing even
+                // after retries. Never drop it silently — mark it so it can be listened to.
+                logError(String(format: "region %.0f-%.0fs: speech detected but not transcribed after retries", r.start, r.end), .transcribe)
+                // Not flagged on purpose: flagged lines are hidden by default.
+                out.append(Segment(start: r.start, end: r.end, text: Self.untranscribedText))
+                continue
             }
             for seg in results.flatMap(\.segments) {
                 let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
