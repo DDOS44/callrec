@@ -146,6 +146,8 @@ case "watch":
     let watcher = Watcher(config: Config.load())
     watcher.run()
 
+case "history":
+    CallHistory.recent(limit: args.count > 1 ? Int(args[1]) ?? 10 : 10).forEach { print($0) }
 case "status":
     guard #available(macOS 14.2, *) else {
         print("callrec needs macOS 14.2 or newer.")

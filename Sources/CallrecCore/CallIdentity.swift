@@ -31,19 +31,56 @@ public enum CallHistory {
     /// Core Data stores seconds since 2001-01-01.
     static let appleEpoch = Date(timeIntervalSince1970: 978_307_200)
 
+    /// Runs read-only SQL against a private snapshot of the store. Recent calls live
+    /// in CallHistory.storedata-wal until macOS checkpoints it; the old
+    /// `?immutable=1` open ignored the WAL, so the newest call it could see was
+    /// days old (2026-10-07). Copying db + -wal + -shm into a 0700 temp dir and
+    /// querying the copy sees everything and never touches the live database.
+    static func query(_ sql: String, separator: String = "\u{1}", timeout: TimeInterval = 15)
+        throws -> (status: Int32, stdout: String, stderr: String) {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent("callrec-history-\(UUID().uuidString)")
+        try fm.createDirectory(at: tmp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { Fs.remove(tmp) }
+        let copy = tmp.appendingPathComponent("CallHistory.storedata")
+        try fm.copyItem(at: storeURL, to: copy)
+        for suffix in ["-wal", "-shm"] {
+            let src = URL(fileURLWithPath: storeURL.path + suffix)
+            if fm.fileExists(atPath: src.path) {
+                try fm.copyItem(at: src, to: URL(fileURLWithPath: copy.path + suffix))
+            }
+        }
+        return try Shell.run("/usr/bin/sqlite3", ["-readonly", "-separator", separator, copy.path, sql], timeout: timeout)
+    }
+
     /// True when the call-history database can actually be read.
     public static var readable: Bool {
         guard FileManager.default.fileExists(atPath: storeURL.path) else { return false }
         let r: (status: Int32, stdout: String, stderr: String)
         do {
-            r = try Shell.run("/usr/bin/sqlite3", ["-readonly", "file:\(storeURL.path)?immutable=1",
-                                                   "select count(*) from ZCALLRECORD;"], timeout: 10)
+            r = try query("select count(*) from ZCALLRECORD;", timeout: 10)
         } catch {
             log("call history probe failed to run: \(error.localizedDescription)", .transcribe)
             return false
         }
         // A nonzero status here is the normal "Full Disk Access not granted" answer.
         return r.status == 0
+    }
+
+    /// Most recent call-history rows (local time, number, name, seconds) for
+    /// `callrec history`: diagnosing why a recording didn't match a call.
+    public static func recent(limit: Int = 10) -> [String] {
+        let sql = """
+        select datetime(ZDATE + 978307200, 'unixepoch', 'localtime'), coalesce(ZADDRESS,''), \
+        coalesce(ZNAME,''), cast(coalesce(ZDURATION,0) as int) from ZCALLRECORD order by ZDATE desc limit \(limit);
+        """
+        do {
+            let r = try query(sql, separator: "  |  ")
+            guard r.status == 0 else { return ["call history not readable: \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))"] }
+            return r.stdout.split(separator: "\n").map(String.init)
+        } catch {
+            return ["could not run sqlite3: \(error.localizedDescription)"]
+        }
     }
 
     /// The number dialled around `date`, if the history is readable.
@@ -57,8 +94,7 @@ public enum CallHistory {
         """
         let r: (status: Int32, stdout: String, stderr: String)
         do {
-            r = try Shell.run("/usr/bin/sqlite3", ["-readonly", "-separator", "\u{1}",
-                                                   "file:\(storeURL.path)?immutable=1", sql], timeout: 15)
+            r = try query(sql)
         } catch {
             log("call history lookup failed to run: \(error.localizedDescription)", .transcribe)
             return nil
