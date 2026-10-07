@@ -62,6 +62,8 @@ public enum DialPause: Equatable, Sendable {
     case possibleCarrierRestriction
     /// SIM detection is on but the last call's line could not be read.
     case simUnverified
+    /// The recorder (the only reader of call history) did not answer.
+    case historyUnavailable
 
     public var message: String {
         switch self {
@@ -69,6 +71,7 @@ public enum DialPause: Equatable, Sendable {
         case .tooManyDoNotCallToday(let n): return "\(n) numbers were added to do-not-call today. Complaint risk. Pause and review."
         case .possibleCarrierRestriction: return "A call was barred or not allowed. Possible carrier restriction: stop for today."
         case .simUnverified: return "Could not read which line the last call used. Check the SIM before continuing."
+        case .historyUnavailable: return "Call history is unavailable: the background recorder did not answer. Check that it is running (menu bar), then resume."
         }
     }
 }

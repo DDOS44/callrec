@@ -106,7 +106,14 @@ public final class DialRunner: ObservableObject {
 
     private func alert(_ message: String) {
         logError("dialer: \(message)")
-        alerts.append(message)
+        if alerts.last != message { alerts.append(message) }
+    }
+
+    /// History is read only by the recorder. When it does not answer, the session stops dialing
+    /// and says why; it never carries on without the data.
+    private func historyFailed(_ error: Error, doing what: String) {
+        alert("Call history could not be read \(what): \(error.localizedDescription).")
+        perform(session.handle(.policyHalt(.pause(.policy(.historyUnavailable)))))
     }
 
     public func dismissAlerts() { alerts.removeAll() }
@@ -151,7 +158,7 @@ public final class DialRunner: ObservableObject {
             log(SIMDetector.summary(snap.detection, candidates: snap.detection.column.map { [$0] } ?? []))
         } catch {
             snapshot = nil
-            alert("Call history could not be read (\(error.localizedDescription)). Cooldown uses the dial log only and the SIM check is manual.")
+            alert("Call history could not be read (\(error.localizedDescription)). Dialing is blocked until the recorder answers.")
         }
     }
 
@@ -176,6 +183,9 @@ public final class DialRunner: ObservableObject {
         items.append(.init(id: "caps", title: "Dials left today",
                            detail: capBlock?.message ?? "\(left) of \(rules.dailyCap) today, \(max(rules.hourlyCap - dialsLastHour, 0)) of \(rules.hourlyCap) this hour.",
                            state: capBlock == nil ? .ok : .fail))
+        items.append(.init(id: "history", title: "Call history",
+                           detail: snapshot == nil ? "The background recorder did not answer. Is it running?" : "Reachable (cooldown and call checks).",
+                           state: snapshot == nil ? .fail : .ok))
         items.append(.init(id: "dnc", title: "Do-not-call list", detail: "\(dnc.keys.count) number(s) loaded.",
                            state: logUnreadable ? .fail : .ok))
         if simDetectionActive {
@@ -352,7 +362,7 @@ public final class DialRunner: ObservableObject {
                 if let row = SIMDetector.call(forNumber: lead.number, dialedAt: dialedAt, rows: snap.rows) {
                     perform(session.handle(.dialResolved(.placed(seconds: row.seconds), now: services.now())))
                 }
-            } catch { alert("Call history could not be read to check the dial: \(error.localizedDescription)") }
+            } catch { historyFailed(error, doing: "to check the dial") }
         }
     }
 
@@ -372,7 +382,7 @@ public final class DialRunner: ObservableObject {
                 let snap = try await load()
                 snapshot = snap
                 line = snap.line(forNumber: a.key, dialedAt: dialed)
-            } catch { alert("Call history could not be read after the call: \(error.localizedDescription)") }
+            } catch { historyFailed(error, doing: "after the call") }
             let result: DialResult = connected ? .connected : .noConnect
             guard append(a.finished(at: ended, result: result, seconds: seconds, sim: line)) else { return }
             if let halt = haltAfterCall() { perform(session.handle(.policyHalt(halt))) }

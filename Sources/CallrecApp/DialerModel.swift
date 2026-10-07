@@ -66,6 +66,15 @@ final class DialerModel: ObservableObject {
         return candidate
     }
 
+    private static func askRecorder(days: Int) async throws -> HistorySnapshot {
+        let since = Date().addingTimeInterval(-Double(days) * 86_400).timeIntervalSince1970
+        let response = try await HistoryMailbox.ask(HistoryMailbox.Request(sinceEpoch: since))
+        let rows = response.rows.map {
+            HistoryCall(key: $0.numberKey, date: Date(timeIntervalSince1970: $0.epoch), seconds: $0.seconds)
+        }
+        return HistorySnapshot(rows: rows, detection: .unavailable(reason: "call history is read by the recorder, which does not report the line"))
+    }
+
     private static func services(dialer: Dialer, config: Config, name: String, leads: LeadImport,
                                  store: LeadStateStore) -> DialRunner.Services {
         let stateURL = DialerPaths.home.appendingPathComponent("state.json")
@@ -76,7 +85,8 @@ final class DialerModel: ObservableObject {
                 guard let s = StatusProbe.watcherState(at: stateURL) else { return .init(recording: false) }
                 return .init(recording: s.state == "recording", since: ISO8601DateFormatter().date(from: s.since))
             },
-            loadHistory: { try await Task.detached(priority: .userInitiated) { try CallHistory.snapshot() }.value },
+            // Only the recorder (which holds Full Disk Access) reads call history; ask it.
+            loadHistory: { try await Self.askRecorder(days: max(config.cooldownDays, 1)) },
             applyToMarkdown: { start, lead, outcome, notes in
                 try DialMarkdown.apply(root: root, callStart: start, lead: lead, outcome: outcome, notes: notes)
             },

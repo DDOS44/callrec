@@ -384,7 +384,11 @@ public struct DialSession: Equatable, Sendable {
         guard let halt = pendingHalt else { return }
         pendingHalt = nil
         // A pause that arrives with the session already paused for a reason keeps that reason.
-        if case .pause = halt, case .paused = phase { return }
+        if case .pause(let r) = halt, case .paused = phase {
+            // "History unavailable" explains more than "not placed" does: let it win.
+            if case .policy(.historyUnavailable) = r { phase = .paused(r) }
+            return
+        }
         phase = Self.phase(for: halt)
     }
 

@@ -8,6 +8,7 @@ private final class Box: @unchecked Sendable {
     var since: Date?
     var mdReady = false
     var mdWrites: [(String, String)] = []
+    var historyDown = false
     var snapshot = HistorySnapshot(rows: [], detection: .unavailable(reason: "fixture"))
 }
 
@@ -35,7 +36,7 @@ private struct Rig {
             dialLogURL: logURL ?? dir.appendingPathComponent("dial-log.jsonl"), dncURL: dir.appendingPathComponent("dnc.txt"),
             calendar: DialFixture.cal, now: { box.now },
             callState: { .init(recording: box.recording, since: box.since) },
-            loadHistory: { box.snapshot },
+            loadHistory: { if box.historyDown { throw HistoryMailbox.MailboxError.timeout }; return box.snapshot },
             applyToMarkdown: { _, _, outcome, notes in
                 guard box.mdReady else { return false }
                 box.mdWrites.append((outcome, notes)); return true
@@ -206,4 +207,46 @@ private struct Rig {
     equal(again.outcome, "pitched", "wrap.emptyOutcomeKeepsOld")
     // A call 30 seconds away is a different call.
     equal(try DialMarkdown.apply(root: root, callStart: start.addingTimeInterval(30), lead: lead, outcome: "x", notes: "y"), false, "wrap.otherCall")
+}
+
+@MainActor @Test func theManualSIMTickIsRequiredEverySession() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle()
+    expect(!r.canPassPreflight, "tick.neededFirstSession")
+    r.passPreflight()
+    equal(rig.dialer.dialed.count, 0, "tick.noDialUntilTicked")
+    r.confirmManualSIM(true); r.passPreflight()
+    equal(rig.dialer.dialed.count, 1, "tick.dialsOnceTicked")
+    r.stop()
+    // Ending the session at the first safe moment, then a brand-new session.
+    r.tick(); rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(1); r.tick()
+    rig.advance(30); rig.box.recording = false; r.tick(); await rig.settle()
+    r.saveWrapUp(outcome: "", notes: "", doNotCall: false)
+    equal(r.session.phase, .stopped(.user), "tick.sessionOneEnded")
+    rig.advance(400)
+    r.start(); await rig.settle()
+    expect(!r.canPassPreflight, "tick.resetForNewSession", "\(r.preflightItems())")
+    equal(rig.dialer.dialed.count, 1, "tick.noDialInSessionTwo")
+}
+
+@MainActor @Test func historyUnavailableBlocksTheStartAndPausesMidSession() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    rig.box.historyDown = true
+    r.start(); await rig.settle(); r.confirmManualSIM(true)
+    expect(!r.canPassPreflight, "histdown.preflightBlocked")
+    expect(r.preflightItems().contains { $0.id == "history" && $0.state == .fail }, "histdown.itemShown")
+    rig.box.historyDown = false
+    r.cancelPreflight(); r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    equal(rig.dialer.dialed.count, 1, "histdown.dialsWhenUp")
+    // The recorder stops answering while the dial is waiting: the lookup fails, the session says why.
+    rig.box.historyDown = true
+    r.tick(); rig.advance(46); r.tick(); await rig.settle()
+    expect(r.session.banner?.contains("Call history is unavailable") ?? false, "histdown.clearMessage", r.session.banner ?? "nil")
+    rig.advance(100); r.tick(); await rig.settle()
+    if case .paused(.policy(.historyUnavailable)) = r.session.phase {} else { Issue.record("histdown.paused: \(r.session.phase)") }
+    equal(rig.dialer.dialed.count, 1, "histdown.neverContinues")
 }
