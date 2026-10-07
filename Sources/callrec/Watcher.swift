@@ -84,7 +84,25 @@ final class Watcher {
                 finishRecording()
             }
 
+            serveHistoryRequests()
             Thread.sleep(forTimeInterval: 1)
+        }
+    }
+
+    private let mailboxQueue = DispatchQueue(label: "callrec.history-mailbox")
+    private let mailboxBusy = NSLock()
+    private var mailboxRunning = false
+
+    /// The dialer app has no Full Disk Access, so it asks this daemon to read call history
+    /// (see HistoryMailbox). Runs off the watch loop so a slow query never delays call detection.
+    private func serveHistoryRequests() {
+        mailboxBusy.lock()
+        if mailboxRunning { mailboxBusy.unlock(); return }
+        mailboxRunning = true
+        mailboxBusy.unlock()
+        mailboxQueue.async { [weak self] in
+            HistoryMailbox.serve { try CallHistory.mailboxRows(since: $0.sinceEpoch) }
+            self?.mailboxBusy.lock(); self?.mailboxRunning = false; self?.mailboxBusy.unlock()
         }
     }
 

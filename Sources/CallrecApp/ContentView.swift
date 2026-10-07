@@ -8,9 +8,9 @@ struct ContentView: View {
         NavigationSplitView {
             Sidebar()
         } content: {
-            CallListColumn()
+            if model.selectedDay == AppModel.dialerTag { DialerListColumn() } else { CallListColumn() }
         } detail: {
-            DetailColumn()
+            if model.selectedDay == AppModel.dialerTag { DialerMainColumn() } else { DetailColumn() }
         }
         .searchable(text: $model.search, placement: .toolbar, prompt: "Search transcripts and notes")
         .toolbar {
@@ -44,6 +44,10 @@ struct Sidebar: View {
 
     var body: some View {
         List(selection: $model.selectedDay) {
+            Section("Dialer") {
+                Label("Power dialer", systemImage: "phone.arrow.up.right")
+                    .tag(AppModel.dialerTag)
+            }
             Section("Days") {
                 Label("All calls", systemImage: "tray.full")
                     .badge(model.allCalls.count)

@@ -27,11 +27,42 @@ public struct Config: Codable, Sendable {
     /// the order. Off = one chronological transcript of the whole call.
     public var speakerLabels = false
 
+    // Power dialer guardrails (docs/specs/power-dialer.md). Every value is enforced by
+    // DialPolicy; these are the defaults.
+    /// Dial attempts per calendar day, any list.
+    public var dailyCap = 30
+    /// Dial attempts per rolling 60 minutes.
+    public var hourlyCap = 10
+    /// Random gap in seconds [min, max] between the end of wrap-up and the next dial.
+    public var gapSeconds = [45, 120]
+    /// Local "HH:mm" start and end (end is exclusive).
+    public var callingHours = ["10:00", "18:30"]
+    /// ISO weekdays, 1 = Monday ... 7 = Sunday.
+    public var callingDays = [1, 2, 3, 4, 5, 6]
+    /// A number is never redialled within this many days.
+    public var cooldownDays = 7
+    /// Expected SIM/line value for the cold-calling SIM, captured at pre-flight. "" = not set.
+    public var coldSIM = ""
+    /// Pause the session when this many numbers are added to the do-not-call list in one day.
+    public var dncPausePerDay = 3
+    /// Pause after this many consecutive dials that fail to connect or are shorter than `shortCallSeconds`.
+    public var failurePauseCount = 3
+    public var shortCallSeconds = 5
+    /// No call started this many seconds after dialing: mark "not placed" and pause.
+    public var notPlacedTimeoutSeconds = 45
+    /// Default list for the Dialer (a CSV under ~/.callrec/lists/). Empty = pick one in the app.
+    public var dialerListPath = ""
+    /// Only dial rows whose `caller` column equals this. Empty = every row.
+    public var dialerCaller = ""
+
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
         case recordingsDir, modelFolder, vadModelPath, announcementPhrases, language, triggerBundleIDs, leadsCSV
         case minCallSeconds, stopAfterSilentSeconds, vocabulary, speakerLabels
+        case dailyCap, hourlyCap, gapSeconds, callingHours, callingDays, cooldownDays, coldSIM
+        case dncPausePerDay, failurePauseCount, shortCallSeconds, notPlacedTimeoutSeconds
+        case dialerListPath, dialerCaller
     }
 
     /// Every key is optional so a config written by an older build, or by hand
@@ -50,6 +81,19 @@ public struct Config: Codable, Sendable {
         stopAfterSilentSeconds = try c.decodeIfPresent(Int.self, forKey: .stopAfterSilentSeconds) ?? stopAfterSilentSeconds
         vocabulary = try c.decodeIfPresent([String].self, forKey: .vocabulary) ?? vocabulary
         speakerLabels = try c.decodeIfPresent(Bool.self, forKey: .speakerLabels) ?? speakerLabels
+        dailyCap = try c.decodeIfPresent(Int.self, forKey: .dailyCap) ?? dailyCap
+        hourlyCap = try c.decodeIfPresent(Int.self, forKey: .hourlyCap) ?? hourlyCap
+        gapSeconds = try c.decodeIfPresent([Int].self, forKey: .gapSeconds) ?? gapSeconds
+        callingHours = try c.decodeIfPresent([String].self, forKey: .callingHours) ?? callingHours
+        callingDays = try c.decodeIfPresent([Int].self, forKey: .callingDays) ?? callingDays
+        cooldownDays = try c.decodeIfPresent(Int.self, forKey: .cooldownDays) ?? cooldownDays
+        coldSIM = try c.decodeIfPresent(String.self, forKey: .coldSIM) ?? coldSIM
+        dncPausePerDay = try c.decodeIfPresent(Int.self, forKey: .dncPausePerDay) ?? dncPausePerDay
+        failurePauseCount = try c.decodeIfPresent(Int.self, forKey: .failurePauseCount) ?? failurePauseCount
+        shortCallSeconds = try c.decodeIfPresent(Int.self, forKey: .shortCallSeconds) ?? shortCallSeconds
+        notPlacedTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .notPlacedTimeoutSeconds) ?? notPlacedTimeoutSeconds
+        dialerListPath = try c.decodeIfPresent(String.self, forKey: .dialerListPath) ?? dialerListPath
+        dialerCaller = try c.decodeIfPresent(String.self, forKey: .dialerCaller) ?? dialerCaller
     }
 
     /// Overridable for tests and for pointing the watcher at another app.

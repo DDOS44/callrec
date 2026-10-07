@@ -224,6 +224,17 @@ It splits the session into separate calls at the long silences and transcribes e
 model folder. You do not need to touch it. Leave `language` at `en`: this model writes Roman Hinglish
 only when told the language is English (`hi` gives garbage).
 
+## Dialer (India)
+
+The Dialer section of the app works through a CSV list one lead at a time: next-up card, call, wrap-up, a random gap, next lead. One call at a time, a human on every call, never parallel dialing.
+
+- **Legal reality.** Since TRAI's February 2025 amendment, commercial calls from normal 10-digit numbers are not permitted, and five complaints in ten days can trigger action against the number. The dialer keeps the pace human and tries to minimise complaints. It cannot make 10-digit cold calling compliant. Use a dedicated SIM, never your main number.
+- **Hard stops, not advice.** 30 dials a day, 10 an hour, a random 45-120 s gap after wrap-up, 10:00-18:30 Monday to Saturday only, and no number redialled within 7 days (dial log plus call history). All are config keys (`dailyCap`, `hourlyCap`, `gapSeconds`, `callingHours`, `callingDays`, `cooldownDays`).
+- **Do-not-call.** `~/.callrec/dnc.txt` is append-only and checked before every dial. Three additions in one day pause the session.
+- **Wrong line.** After each call the line is read from call history. If the call used any SIM other than the cold one, the session stops with a red banner. If this Mac's call history has no trustworthy line column (`callrec history --schema` shows what it has), the pre-flight asks you to tick "Default Voice Line is the cold SIM" every session.
+- **Block detection.** Three dials in a row that do not connect or last under 5 s pause the session ("possible carrier restriction, stop for today").
+- **Your data.** Lists, `dial-log.jsonl`, lead state and the do-not-call list live in `~/.callrec/`, owner-only, never in the repo. Nothing is sent anywhere.
+
 ## Uninstall
 
 ```

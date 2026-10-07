@@ -1,0 +1,252 @@
+import Foundation
+import Testing
+@testable import CallrecCore
+
+private final class Box: @unchecked Sendable {
+    var now = DialFixture.at(7, 12)
+    var recording = false
+    var since: Date?
+    var mdReady = false
+    var mdWrites: [(String, String)] = []
+    var historyDown = false
+    var snapshot = HistorySnapshot(rows: [], detection: .unavailable(reason: "fixture"))
+}
+
+@MainActor
+private struct Rig {
+    let box = Box()
+    let dialer = FakeDialer()
+    let dir: URL
+    let runner: DialRunner
+
+    init(logURL: URL? = nil, snapshot: HistorySnapshot? = nil) throws {
+        if let snapshot { box.snapshot = snapshot }
+        dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-runner-\(UUID())")
+        try Paths.ensureDir(dir)
+        let leads = try LeadImporter.parse("""
+        company,phone,confidence
+        Fake One,9000000001,high
+        Fake Two,9000000002,medium
+        Fake Three,9000000003,low
+        """)
+        let store = try LeadStateStore(url: dir.appendingPathComponent("fake.state.json"), listName: "fake")
+        let box = self.box
+        let services = DialRunner.Services(
+            dialer: dialer, config: Config(), listName: "fake", leads: leads, store: store,
+            dialLogURL: logURL ?? dir.appendingPathComponent("dial-log.jsonl"), dncURL: dir.appendingPathComponent("dnc.txt"),
+            calendar: DialFixture.cal, now: { box.now },
+            callState: { .init(recording: box.recording, since: box.since) },
+            loadHistory: { if box.historyDown { throw HistoryMailbox.MailboxError.timeout }; return box.snapshot },
+            applyToMarkdown: { _, _, outcome, notes in
+                guard box.mdReady else { return false }
+                box.mdWrites.append((outcome, notes)); return true
+            },
+            saveColdSIM: { _ in }, autoTick: false)
+        runner = DialRunner(services)
+    }
+
+    func settle() async { for _ in 0..<20 { await Task.yield() } }
+    func advance(_ s: TimeInterval) { box.now = box.now.addingTimeInterval(s) }
+}
+
+@MainActor @Test func aWholeSessionWithAFakeDialer() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start()
+    await rig.settle()
+    expect(!r.canPassPreflight, "run.manualSIMNeedsTick", "\(r.preflightItems())")
+    r.confirmManualSIM(true)
+    expect(r.canPassPreflight, "run.preflightOK", "\(r.preflightItems())")
+    r.passPreflight()
+    equal(rig.dialer.dialed, ["9000000001"], "run.firstDialHighConfidence")
+    equal(r.dialsToday, 1, "run.attemptLogged")
+    if case .waitingForCall = r.session.phase {} else { Issue.record("run.waiting: \(r.session.phase)") }
+
+    // The call connects, then ends.
+    r.tick()
+    rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(2)
+    r.tick()
+    if case .onCall = r.session.phase {} else { Issue.record("run.onCall: \(r.session.phase)") }
+    rig.advance(60); rig.box.recording = false
+    r.tick()
+    await rig.settle()
+    if case .wrapUp = r.session.phase {} else { Issue.record("run.wrapUp: \(r.session.phase)"); return }
+    expect(r.dialLog.contains { $0.kind == .result && $0.result == .connected && $0.seconds == 60 }, "run.resultLogged")
+
+    // Time passes while the user types: nothing dials.
+    rig.advance(600); r.tick()
+    equal(rig.dialer.dialed.count, 1, "run.noDialDuringWrapUp")
+
+    // Save: the .md does not exist yet, so the write waits and retries.
+    r.saveWrapUp(outcome: "pitched", notes: "call back", doNotCall: false)
+    equal(r.pendingMarkdownCount, 1, "run.mdPending")
+    rig.box.mdReady = true; r.tick()
+    equal(r.pendingMarkdownCount, 0, "run.mdWritten")
+    equal(rig.box.mdWrites.first?.0 ?? "", "pitched", "run.mdOutcome")
+    equal(r.queue.first { $0.id == "9000000001" }?.record.outcome ?? "", "pitched", "run.leadState")
+
+    // The gap passes, the next lead is dialled; the first is not redialled.
+    rig.advance(130); r.tick()
+    equal(rig.dialer.dialed, ["9000000001", "9000000002"], "run.secondLead")
+    r.stop()
+    if case .waitingForCall = r.session.phase {} else { Issue.record("run.stopWaitsForCall: \(r.session.phase)") }
+}
+
+@MainActor @Test func doNotCallAgainWritesTheListAndNeverRedials() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    r.tick()
+    rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(1); r.tick()
+    r.doNotCallAgain()
+    expect(r.dnc.contains("9000000001"), "dnc.listed")
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .doNotCall, "dnc.leadStatus")
+    let text = try String(contentsOf: rig.dir.appendingPathComponent("dnc.txt"), encoding: .utf8)
+    expect(text.hasPrefix("9000000001"), "dnc.fileWritten", text)
+}
+
+@MainActor @Test func aDialThatCannotBeLoggedIsNeverPlaced() async throws {
+    let blocker = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-blocker-\(UUID())")
+    try Data("a file where a folder should be".utf8).write(to: blocker)
+    defer { Fs.remove(blocker) }
+    let rig = try Rig(logURL: blocker.appendingPathComponent("dial-log.jsonl"))
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle()
+    r.confirmManualSIM(true)
+    expect(!r.canPassPreflight, "nolog.preflightBlocked")
+    r.passPreflight()
+    equal(rig.dialer.dialed.count, 0, "nolog.neverDialed")
+    equal(r.session.phase, .preflight, "nolog.stillPreflight")
+    expect(!r.alerts.isEmpty, "nolog.visibleAlert")
+}
+
+@MainActor @Test func dialerRefusalPausesAndLogsNotPlaced() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    rig.dialer.failWith = DialerError.refused
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    if case .paused(.dialFailed) = r.session.phase {} else { Issue.record("refuse.paused: \(r.session.phase)") }
+    expect(r.dialLog.contains { $0.result == .notPlaced }, "refuse.notPlacedLogged")
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .pending, "refuse.leadStaysPending")
+}
+
+@MainActor @Test func outsideCallingHoursNeverDials() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    rig.box.now = DialFixture.at(7, 22)
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true)
+    expect(!r.canPassPreflight, "hours.preflightFails")
+    r.passPreflight()
+    equal(rig.dialer.dialed.count, 0, "hours.noDial")
+}
+
+@MainActor @Test func wrongSIMAfterACallStopsTheSession() async throws {
+    // History: eight earlier calls on two fake lines make the "ZSIM" column trustworthy.
+    let day = DialFixture.at(6, 11)
+    var rows: [HistoryCall] = (0..<8).map {
+        HistoryCall(key: "90000001\($0)0", date: day.addingTimeInterval(Double($0) * 60), seconds: 30, originated: true,
+                    values: ["ZSIM": $0 % 3 == 0 ? "COLD" : "PERSONAL"])
+    }
+    let snap = HistorySnapshot(rows: rows, detection: SIMDetector.analyze(candidates: ["ZSIM"], rows: rows))
+    let rig = try Rig(snapshot: snap)
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle()
+    expect(r.simDetectionActive, "sim.detected")
+    r.chooseColdSIM("COLD")
+    expect(r.canPassPreflight, "sim.preflightOK", "\(r.preflightItems())")
+    r.passPreflight()
+    equal(rig.dialer.dialed, ["9000000001"], "sim.dialed")
+    r.tick()
+    rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(2); r.tick()
+    // The call we placed now shows up in call history, on the wrong line.
+    var after = rows
+    after.append(HistoryCall(key: "9000000001", date: DialFixture.at(7, 12).addingTimeInterval(3), seconds: 50, originated: true,
+                             values: ["ZSIM": "PERSONAL"]))
+    rig.box.snapshot = HistorySnapshot(rows: after, detection: SIMDetector.analyze(candidates: ["ZSIM"], rows: after))
+    rig.advance(50); rig.box.recording = false; r.tick()
+    await rig.settle()
+    expect(r.session.isRedBanner, "sim.redBanner", "\(r.session.banner ?? "nil")")
+    r.saveWrapUp(outcome: "", notes: "kept", doNotCall: false)
+    if case .stopped(.policy(.wrongSIM)) = r.session.phase {} else { Issue.record("sim.stopped: \(r.session.phase)") }
+    rig.advance(300); r.tick()
+    equal(rig.dialer.dialed.count, 1, "sim.neverDialsAgain")
+}
+
+@Test func wrapUpIsWrittenIntoTheCallsMarkdownWithoutTouchingTheTranscript() throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-wrap-\(UUID())")
+    defer { Fs.remove(root) }
+    let start = DialFixture.at(7, 11, 30, 5)
+    let paths = Paths.forCall(at: start, root: root)
+    let lead = Lead(number: "9000000001", company: "Fake One", city: "", owner: "Asha Test", whatTheyDo: "", angle: "",
+                    confidence: .high, altNumber: nil, caller: "", order: 1)
+    equal(try DialMarkdown.apply(root: root, callStart: start, lead: lead, outcome: "pitched", notes: "n"), false, "wrap.noMdYet")
+    try Paths.ensureDir(paths.dir)
+    let md = Markdown.render(date: start, seconds: 60, audioName: "x.m4a",
+                             segments: [Segment(start: 1, end: 3, text: "hello there", speaker: .unknown)])
+    try Data(md.utf8).write(to: paths.md)
+    // The daemon's clock and ours differ by a couple of seconds.
+    equal(try DialMarkdown.apply(root: root, callStart: start.addingTimeInterval(2), lead: lead, outcome: "pitched", notes: "call back Tue"),
+          true, "wrap.written")
+    let after = try String(contentsOf: paths.md, encoding: .utf8)
+    let fields = MarkdownFields.read(md: after)
+    equal(fields.outcome, "pitched", "wrap.outcome")
+    equal(fields.notes, "call back Tue", "wrap.notes")
+    equal(MarkdownFields.identity(md: after).company, "Fake One", "wrap.company")
+    equal(MarkdownFields.identity(md: after).owner, "Asha Test", "wrap.owner")
+    expect(after.contains("hello there"), "wrap.transcriptIntact")
+    // Saving again adds to the notes, never replaces them.
+    _ = try DialMarkdown.apply(root: root, callStart: start, lead: lead, outcome: "", notes: "second")
+    let again = MarkdownFields.read(md: try String(contentsOf: paths.md, encoding: .utf8))
+    equal(again.notes, "call back Tue | second", "wrap.notesAppend")
+    equal(again.outcome, "pitched", "wrap.emptyOutcomeKeepsOld")
+    // A call 30 seconds away is a different call.
+    equal(try DialMarkdown.apply(root: root, callStart: start.addingTimeInterval(30), lead: lead, outcome: "x", notes: "y"), false, "wrap.otherCall")
+}
+
+@MainActor @Test func theManualSIMTickIsRequiredEverySession() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle()
+    expect(!r.canPassPreflight, "tick.neededFirstSession")
+    r.passPreflight()
+    equal(rig.dialer.dialed.count, 0, "tick.noDialUntilTicked")
+    r.confirmManualSIM(true); r.passPreflight()
+    equal(rig.dialer.dialed.count, 1, "tick.dialsOnceTicked")
+    r.stop()
+    // Ending the session at the first safe moment, then a brand-new session.
+    r.tick(); rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(1); r.tick()
+    rig.advance(30); rig.box.recording = false; r.tick(); await rig.settle()
+    r.saveWrapUp(outcome: "", notes: "", doNotCall: false)
+    equal(r.session.phase, .stopped(.user), "tick.sessionOneEnded")
+    rig.advance(400)
+    r.start(); await rig.settle()
+    expect(!r.canPassPreflight, "tick.resetForNewSession", "\(r.preflightItems())")
+    equal(rig.dialer.dialed.count, 1, "tick.noDialInSessionTwo")
+}
+
+@MainActor @Test func historyUnavailableBlocksTheStartAndPausesMidSession() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    rig.box.historyDown = true
+    r.start(); await rig.settle(); r.confirmManualSIM(true)
+    expect(!r.canPassPreflight, "histdown.preflightBlocked")
+    expect(r.preflightItems().contains { $0.id == "history" && $0.state == .fail }, "histdown.itemShown")
+    rig.box.historyDown = false
+    r.cancelPreflight(); r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    equal(rig.dialer.dialed.count, 1, "histdown.dialsWhenUp")
+    // The recorder stops answering while the dial is waiting: the lookup fails, the session says why.
+    rig.box.historyDown = true
+    r.tick(); rig.advance(46); r.tick(); await rig.settle()
+    expect(r.session.banner?.contains("Call history is unavailable") ?? false, "histdown.clearMessage", r.session.banner ?? "nil")
+    rig.advance(100); r.tick(); await rig.settle()
+    if case .paused(.policy(.historyUnavailable)) = r.session.phase {} else { Issue.record("histdown.paused: \(r.session.phase)") }
+    equal(rig.dialer.dialed.count, 1, "histdown.neverContinues")
+}
