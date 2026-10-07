@@ -83,6 +83,81 @@ public enum CallHistory {
         }
     }
 
+    public struct Column: Equatable, Sendable {
+        public var name: String
+        public var type: String
+    }
+
+    /// Parses `PRAGMA table_info` output (cid, name, type, notnull, default, pk) split on `separator`.
+    static func parseTableInfo(_ output: String, separator: String = "\u{1}") -> [Column] {
+        output.split(separator: "\n").compactMap { line in
+            let f = line.components(separatedBy: separator)
+            return f.count >= 3 ? Column(name: f[1], type: f[2]) : nil
+        }
+    }
+
+    /// The columns of ZCALLRECORD. Throws when the database cannot be read.
+    public static func columns() throws -> [Column] {
+        let r = try query("PRAGMA table_info(ZCALLRECORD);")
+        guard r.status == 0 else {
+            throw NSError(domain: "callrec", code: 42, userInfo: [NSLocalizedDescriptionKey:
+                "call history not readable: \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))"])
+        }
+        return parseTableInfo(r.stdout)
+    }
+
+    /// Recent call rows with the values of `candidateColumns` (names must be plain identifiers).
+    /// Limited to the newest `limit` rows.
+    public static func calls(candidateColumns: [String], limit: Int = 300, hasOriginated: Bool) throws -> [HistoryCall] {
+        let safe = candidateColumns.filter { $0.range(of: "^[A-Za-z0-9_]+$", options: .regularExpression) != nil }
+        func text(_ c: String) -> String { "replace(replace(coalesce(cast(\"\(c)\" as text),''), char(10), ' '), char(1), ' ')" }
+        let extra = safe.map { ", " + text($0) }.joined()
+        let originated = hasOriginated ? ", coalesce(ZORIGINATED, -1)" : ", -1"
+        let sql = "select coalesce(ZADDRESS,''), ZDATE, cast(coalesce(ZDURATION,0) as int)\(originated)\(extra) "
+            + "from ZCALLRECORD order by ZDATE desc limit \(max(limit, 1));"
+        let r = try query(sql)
+        guard r.status == 0 else {
+            throw NSError(domain: "callrec", code: 42, userInfo: [NSLocalizedDescriptionKey:
+                "call history not readable: \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))"])
+        }
+        return r.stdout.split(separator: "\n").compactMap { line in
+            let f = line.components(separatedBy: "\u{1}")
+            guard f.count >= 4 + safe.count, let key = PhoneNumber.key(f[0]), let apple = Double(f[1]) else { return nil }
+            var values: [String: String] = [:]
+            for (i, name) in safe.enumerated() { values[name] = f[4 + i].trimmingCharacters(in: .whitespaces) }
+            let flag = Int(f[3])
+            return HistoryCall(key: key, date: Date(timeInterval: apple, since: appleEpoch), seconds: Int(f[2]) ?? 0,
+                               originated: flag == nil || flag == -1 ? nil : flag == 1, values: values)
+        }
+    }
+
+    /// The text `callrec history --schema` prints: the column list, then what SIM
+    /// detection makes of it. Meant for a human at a terminal (it prints values).
+    public static func schemaReport() -> [String] {
+        let cols: [Column]
+        do { cols = try columns() }
+        catch { return ["could not read the call history schema: \(error.localizedDescription)", noAccessMessage] }
+        var out = ["ZCALLRECORD columns (name, type):"] + cols.map { "  \($0.name)  \($0.type)" }
+        let candidates = SIMDetector.candidateColumns(cols)
+        out.append("SIM/line candidate columns: \(candidates.isEmpty ? "none" : candidates.joined(separator: ", "))")
+        do {
+            let rows = try calls(candidateColumns: candidates, hasOriginated: cols.contains { $0.name == "ZORIGINATED" })
+            for c in candidates {
+                let counts = Dictionary(grouping: rows.map { $0.values[c] ?? "" }, by: { $0 }).mapValues(\.count)
+                let shown = counts.sorted { $0.value > $1.value }.prefix(6).map { "\($0.key.isEmpty ? "(empty)" : $0.key) x\($0.value)" }
+                out.append("  \(c): \(counts.count) distinct in the last \(rows.count) calls: \(shown.joined(separator: ", "))")
+            }
+            let detection = SIMDetector.analyze(candidates: candidates, rows: rows)
+            switch detection {
+            case .available(let column, _): out.append("detection: \(column) identifies the line; the dialer will use it")
+            case .unavailable(let reason): out.append("detection: none (\(reason)); the dialer uses the manual SIM checklist")
+            }
+        } catch {
+            out.append("could not read call rows: \(error.localizedDescription)")
+        }
+        return out
+    }
+
     /// The number dialled around `date`, if the history is readable.
     public static func number(near date: Date, toleranceSeconds: Double = 90) -> (number: String, name: String)? {
         guard FileManager.default.fileExists(atPath: storeURL.path) else { return nil }

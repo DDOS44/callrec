@@ -147,7 +147,11 @@ case "watch":
     watcher.run()
 
 case "history":
-    CallHistory.recent(limit: args.count > 1 ? Int(args[1]) ?? 10 : 10).forEach { print($0) }
+    if args.contains("--schema") {   // hidden: used to find the SIM/line column for the dialer
+        CallHistory.schemaReport().forEach { print($0) }
+    } else {
+        CallHistory.recent(limit: args.count > 1 ? Int(args[1]) ?? 10 : 10).forEach { print($0) }
+    }
 case "status":
     guard #available(macOS 14.2, *) else {
         print("callrec needs macOS 14.2 or newer.")
