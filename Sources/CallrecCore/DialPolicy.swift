@@ -193,7 +193,10 @@ public enum DialPolicy {
     static func cooldownEnd(key: String, now: Date, rules: DialRules, log: [DialLogEntry],
                             history: [String: Date]) -> Date? {
         let window = TimeInterval(rules.cooldownDays) * 86_400
-        let lastDial = log.filter { $0.kind == .attempt && $0.key == key }.map(\.ts).max()
+        // A dial that never placed a call (macOS did not start it) did not ring the number,
+        // so it does not start a cooldown. It still counts against the caps.
+        let notPlaced = Set(log.filter { $0.kind == .result && $0.result == .notPlaced }.map(\.attemptID))
+        let lastDial = log.filter { $0.kind == .attempt && $0.key == key && !notPlaced.contains($0.attemptID) }.map(\.ts).max()
         let last = [lastDial, history[key]].compactMap { $0 }.max()
         guard let last else { return nil }
         let free = last.addingTimeInterval(window)

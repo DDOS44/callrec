@@ -196,6 +196,16 @@ private typealias F = DialFixture
     expect(F.decide("+91 90000 00001", now: now, history: fromHistory) != .allowed, "cooldown.formatInsensitive")
 }
 
+@Test func aNotPlacedDialDoesNotStartACooldownButStillCountsAgainstTheCaps() {
+    let now = F.at(9, 12)
+    let a = DialLogEntry.attempt(at: F.at(8, 11), id: "NP", list: "l", leadID: "1", key: "9000000001")
+    let log = [a, a.finished(at: F.at(8, 11, 50), result: .notPlaced)]
+    equal(F.decide(now: now, log: log), .allowed, "notPlaced.noCooldown")
+    var rules = DialRules(); rules.dailyCap = 1
+    let sameDay = [DialLogEntry.attempt(at: F.at(9, 10), id: "NP2", list: "l", leadID: "1", key: "9000000001")]
+    expect(F.decide(now: now, rules: rules, log: sameDay + [sameDay[0].finished(at: F.at(9, 10, 50), result: .notPlaced)]) != .allowed, "notPlaced.countsForCap")
+}
+
 @Test func cooldownTakesTheLatestOfLogAndHistory() {
     let now = F.at(14, 12)
     let old = now.addingTimeInterval(-8 * 86_400)
