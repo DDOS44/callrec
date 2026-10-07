@@ -18,12 +18,20 @@ public struct Config: Codable, Sendable {
     public var leadsCSV = ""  // optional: path to your own leads CSV
     public var minCallSeconds = 8          // shorter recordings are deleted (misdials, no pickup)
     public var stopAfterSilentSeconds = 6  // watcher: process stops output for this long => call ended
+    /// Names and words the model should expect (your name, company, products).
+    /// Passed as a decoding prompt so it writes "Blaxify" instead of "black sifai".
+    /// Kept in ~/.callrec/config.json, never in code: the public repo has no personal data.
+    public var vocabulary: [String] = []
+    /// Label lines "Me"/"Them" from the two tracks. Off by default: on speakerphone the
+    /// mic hears both people, so per-track labels were wrong and the merge scrambled
+    /// the order. Off = one chronological transcript of the whole call.
+    public var speakerLabels = false
 
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
         case recordingsDir, modelFolder, vadModelPath, announcementPhrases, language, triggerBundleIDs, leadsCSV
-        case minCallSeconds, stopAfterSilentSeconds
+        case minCallSeconds, stopAfterSilentSeconds, vocabulary, speakerLabels
     }
 
     /// Every key is optional so a config written by an older build, or by hand
@@ -40,6 +48,8 @@ public struct Config: Codable, Sendable {
         leadsCSV = try c.decodeIfPresent(String.self, forKey: .leadsCSV) ?? leadsCSV
         minCallSeconds = try c.decodeIfPresent(Int.self, forKey: .minCallSeconds) ?? minCallSeconds
         stopAfterSilentSeconds = try c.decodeIfPresent(Int.self, forKey: .stopAfterSilentSeconds) ?? stopAfterSilentSeconds
+        vocabulary = try c.decodeIfPresent([String].self, forKey: .vocabulary) ?? vocabulary
+        speakerLabels = try c.decodeIfPresent(Bool.self, forKey: .speakerLabels) ?? speakerLabels
     }
 
     /// Overridable for tests and for pointing the watcher at another app.

@@ -173,7 +173,7 @@ public enum Transcriber {
         var segments: [Segment]
         let health = TrackHealth.check(paths: paths)
 
-        if fm.fileExists(atPath: paths.farWav.path), fm.fileExists(atPath: paths.micWav.path) {
+        if config.speakerLabels, fm.fileExists(atPath: paths.farWav.path), fm.fileExists(atPath: paths.micWav.path) {
             let them = try transcribe(wav: paths.farWav, config: config)
             let me = try transcribe(wav: paths.micWav, config: config)
             let themRMS = levels(paths.farWav)
@@ -249,7 +249,7 @@ public enum Transcriber {
                 var segments: [Segment] = []
                 let health = TrackHealth.check(paths: paths)
                 do {
-                    if fm.fileExists(atPath: paths.farWav.path), fm.fileExists(atPath: paths.micWav.path) {
+                    if config.speakerLabels, fm.fileExists(atPath: paths.farWav.path), fm.fileExists(atPath: paths.micWav.path) {
                         let them = try transcribe(wav: paths.farWav, config: config)
                         let me = try transcribe(wav: paths.micWav, config: config)
                         let themRMS = levels(paths.farWav)

@@ -16,6 +16,9 @@ struct CallDetailView: View {
     /// Line start times, ascending, for a binary search instead of a linear
     /// scan of the whole transcript on every player tick.
     @State private var starts: [Double] = []
+    /// Auto-scroll to the playing line. Turns off as soon as you scroll yourself
+    /// (it used to snap back 4x a second and you couldn't scroll up while playing).
+    @State private var followAudio = true
 
     var body: some View {
         ScrollView {
@@ -42,8 +45,9 @@ struct CallDetailView: View {
                 Button("Save", action: saveNow).keyboardShortcut("s", modifiers: .command)
             }
         }
+        .modifier(StopFollowingOnUserScroll(follow: $followAudio))
         .onAppear(perform: sync)
-        .onChange(of: call.id) { sync() }
+        .onChange(of: call.id) { sync(); followAudio = true }
         .onChange(of: model.showFiltered) { rebuildTranscript() }
         .onDisappear { saveTask?.cancel() }
     }
@@ -121,7 +125,18 @@ struct CallDetailView: View {
 
     private var transcriptSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionLabel("Transcript")
+            HStack {
+                SectionLabel("Transcript")
+                Spacer()
+                if !visibleTranscript.isEmpty {
+                    Toggle(isOn: $followAudio) {
+                        Label("Follow audio", systemImage: "arrow.down.to.line")
+                    }
+                    .toggleStyle(.button)
+                    .controlSize(.small)
+                    .help("Keep the playing line in view. Turns off when you scroll.")
+                }
+            }
             if visibleTranscript.isEmpty {
                 Text(call.transcript.isEmpty ? "Not transcribed yet. It appears a minute or so after the call ends."
                      : "Every line in this call is filtered. Turn on \u{201C}Show filtered lines\u{201D} in the toolbar to see them.")
@@ -136,9 +151,14 @@ struct CallDetailView: View {
                                                 onTap: { player.seek(to: $0) })
                         }
                     }
-                    .onChange(of: player.time) {
-                        guard player.playing, let current = currentLine else { return }
-                        withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(current.id, anchor: .center) }
+                    // Only when the playing line CHANGES, not on every player tick.
+                    .onChange(of: currentLine?.id) {
+                        guard followAudio, player.playing, let id = currentLine?.id else { return }
+                        withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
+                    }
+                    .onChange(of: followAudio) {
+                        guard followAudio, let id = currentLine?.id else { return }
+                        withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
                     }
                 }
             }
@@ -326,5 +346,21 @@ struct PlayerCard: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+
+/// Turns auto-follow off the moment the user starts scrolling (macOS 15+). On
+/// macOS 14 the "Follow audio" toggle is the only control.
+private struct StopFollowingOnUserScroll: ViewModifier {
+    @Binding var follow: Bool
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.onScrollPhaseChange { _, phase in
+                if phase == .interacting { follow = false }
+            }
+        } else {
+            content
+        }
     }
 }

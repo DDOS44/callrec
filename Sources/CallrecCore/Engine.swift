@@ -14,6 +14,23 @@ actor Engine {
 
     func release() { kit = nil; vad = nil }
 
+    /// Fewer than ~3 characters per second of detected speech means the model
+    /// skipped most of it (Hinglish speech runs ~10-15 chars/s). Pure, for tests.
+    static func looksTruncated(chars: Int, speechSeconds: Double) -> Bool {
+        guard speechSeconds >= 1.5 else { return false }
+        return Double(chars) < 3.0 * speechSeconds
+    }
+
+    static func text(of results: [TranscriptionResult]) -> String {
+        results.flatMap(\.segments).map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined(separator: " ")
+    }
+
+    /// "Devansh, Blaxify." from a vocabulary list; nil when empty. Pure, for tests.
+    static func prompt(_ vocabulary: [String]) -> String? {
+        let words = vocabulary.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return words.isEmpty ? nil : words.joined(separator: ", ") + "."
+    }
+
     func transcribe(wav: URL, config: Config) async throws -> [Segment] {
         let samples = try AudioProcessor.loadAudioAsFloatArray(fromPath: wav.path)
         let total = Double(samples.count) / Double(WhisperKit.sampleRate)
@@ -43,6 +60,13 @@ actor Engine {
         options.language = config.language
         options.detectLanguage = false
         options.skipSpecialTokens = true
+        if let prompt = Self.prompt(config.vocabulary), let tok = kit.tokenizer {
+            // Bias spelling of names/brands. VAD already keeps silence away from the
+            // model, which is where a prompt would otherwise get hallucinated back.
+            options.promptTokens = tok.encode(text: " " + prompt)
+                .filter { $0 < tok.specialTokens.specialTokenBegin }
+            options.usePrefillPrompt = true
+        }
         var out: [Segment] = []
         let debug = ProcessInfo.processInfo.environment["CALLREC_DEBUG"] != nil
         let whisperState = Log.signposter.beginInterval("whisper", id: Log.signposter.makeSignpostID())
@@ -55,7 +79,35 @@ actor Engine {
             // line is still stamped at the region's own start.
             let a = min(samples.count, max(0, Int((r.start - Self.contextPad) * Double(WhisperKit.sampleRate))))
             let b = min(samples.count, max(a, Int((r.end + Self.contextPad) * Double(WhisperKit.sampleRate))))
-            let results = try await kit.transcribe(audioArray: Array(samples[a..<b]), decodeOptions: options)
+            let clip = Array(samples[a..<b])
+            var results = try await kit.transcribe(audioArray: clip, decodeOptions: options)
+            // A vocabulary prompt fixes names but can make the model return nothing
+            // for a whole region (2026-10-07: 17 s of speech came back empty with the
+            // prompt, full text without it). Never lose a region to the prompt: if the
+            // prompted pass looks too short for the speech in it, redo it unprompted
+            // and keep whichever has more text.
+            if options.promptTokens != nil {
+                let prompted = Self.text(of: results)
+                if Self.looksTruncated(chars: prompted.count, speechSeconds: r.length) {
+                    // Built from scratch, not copied: a copy of the prompted options
+                    // still came back empty in-process.
+                    var plain = DecodingOptions()
+                    plain.task = .transcribe
+                    plain.language = config.language
+                    plain.detectLanguage = false
+                    plain.skipSpecialTokens = true
+                    let retry = try await kit.transcribe(audioArray: clip, decodeOptions: plain)
+                    if debug {
+                        print(String(format: "[debug] retry %.1f-%.1f prompted=%d unprompted=%d", r.start, r.end,
+                                     prompted.count, Self.text(of: retry).count))
+                    }
+                    if Self.text(of: retry).count > prompted.count {
+                        log(String(format: "region %.0f-%.0fs: vocabulary prompt returned %d chars, unprompted %d; kept unprompted",
+                                   r.start, r.end, prompted.count, Self.text(of: retry).count), .transcribe)
+                        results = retry
+                    }
+                }
+            }
             for seg in results.flatMap(\.segments) {
                 let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if ProcessInfo.processInfo.environment["CALLREC_DEBUG"] != nil {
