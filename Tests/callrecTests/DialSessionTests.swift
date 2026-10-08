@@ -322,5 +322,5 @@ private func wrapUp() -> DialSession {
 @Test func pendingStopBannerSaysWillStop() {
     var s = onCall()
     s.handle(.stop)
-    expect(s.banner?.hasPrefix("Will stop after this call") == true, "stop.bannerHonest", "banner: \(s.banner ?? "nil")")
+    expect(s.banner == "Will stop after this call.", "stop.bannerHonest", "banner: \(s.banner ?? "nil")")
 }

@@ -168,11 +168,10 @@ public struct DialSession: Equatable, Sendable {
     /// The message to show in a banner, from a halt that is waiting or already in force.
     public var banner: String? {
         if let h = pendingHalt {
-            // Not in force yet: say what will happen, not what has happened.
-            switch h {
-            case .stop: return "Will stop after this call. \(h.message)"
-            case .pause: return "Will pause after this call. \(h.message)"
-            }
+            // A user Stop waiting on a call is not in force yet: say what will happen.
+            // Policy halts and pauses keep their own messages, which already say so.
+            if case .stop(.user) = h { return "Will stop after this call." }
+            return h.message
         }
         switch phase {
         case .paused(let r): return r.message

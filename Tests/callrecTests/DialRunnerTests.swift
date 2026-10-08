@@ -90,7 +90,9 @@ private struct Rig {
     rig.advance(130); r.tick()
     equal(rig.dialer.dialed, ["9000000001", "9000000002"], "run.secondLead")
     r.stop()
-    if case .waitingForCall = r.session.phase {} else { Issue.record("run.stopWaitsForCall: \(r.session.phase)") }
+    // Changed 2026-10-07: Stop before the call connects applies at once (it used to
+    // wait up to ~2 min for the not-placed timeout behind a "Dialing…" spinner).
+    equal(r.session.phase, .stopped(.user), "run.stopBeforeConnectIsImmediate")
 }
 
 @MainActor @Test func doNotCallAgainWritesTheListAndNeverRedials() async throws {
