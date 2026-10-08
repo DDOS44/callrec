@@ -98,10 +98,16 @@ public final class DialRunner: ObservableObject {
         let live = session.isRunning ? attempt?.attemptID : nil
         let orphans = DialRecovery.unfinished(log: dialLog, now: services.now(), excluding: live)
             .filter { a in a.list == services.listName && services.leads.leads.contains { $0.id == a.leadID } }
-        unfinished = orphans.map { a in
+        let all = orphans.map { a in
             let starts = DialRecovery.recordingStarts(on: a.ts, root: services.config.recordingsURL, calendar: services.calendar)
             return DialRecovery.Unfinished(attempt: a, recordingStart: DialRecovery.recording(after: a.ts, starts: starts))
         }
+        let triage = DialRecovery.triage(all, now: services.now())
+        // An attempt with no recording never became a call: close it quietly, never show it.
+        for a in triage.close where append(a.finished(at: services.now(), result: .notPlaced)) {
+            log("dialer: closed orphaned attempt \(a.attemptID) for \(a.leadID) as not placed (no recording)")
+        }
+        unfinished = triage.offer
     }
 
     /// Opens the wrap-up for a call an interrupted session left unfinished.

@@ -395,8 +395,14 @@ public struct DialSession: Equatable, Sendable {
             // (it used to wait up to ~2 min for the not-placed timeout while the UI
             // said "Stopped" over a "Dialing…" spinner). A pause still waits, so a call
             // that does connect gets its wrap-up.
-            if case .stop = halt { pendingHalt = nil; phase = Self.phase(for: halt) }
-            else if pendingHalt == nil { pendingHalt = halt }
+            // The attempt is already in the dial log, so it is closed as not placed here:
+            // left open it would resurface later as a phantom "has no wrap-up" card.
+            if case .stop = halt, let id = currentLeadID {
+                pendingHalt = nil
+                phase = Self.phase(for: halt)
+                return [.recordNotPlaced(leadID: id)]
+            }
+            if pendingHalt == nil { pendingHalt = halt }
         case .onCall, .wrapUp:
             // Mid-call or wrap-up: wait, so notes are never lost.
             if case .stop = halt { pendingHalt = halt }

@@ -24,6 +24,30 @@ public enum DialRecovery {
             .sorted { $0.ts > $1.ts }
     }
 
+    /// What to do with the orphaned attempts of this list.
+    public struct Triage: Equatable, Sendable {
+        /// Cards to show: have a recording, at most one per lead (the newest).
+        public var offer: [Unfinished]
+        /// Attempts with no recording that are old enough to be certain the call never happened.
+        public var close: [DialLogEntry]
+    }
+
+    /// Only an attempt with a matching recording can have a wrap-up to finish. One without a
+    /// recording, older than `grace`, is closed (not placed) instead of shown; a younger one is
+    /// left alone, since the call may still be about to start. One card per lead.
+    public static func triage(_ items: [Unfinished], now: Date, grace: TimeInterval = 150) -> Triage {
+        var offer: [Unfinished] = [], close: [DialLogEntry] = []
+        var seenLeads = Set<String>()
+        for item in items.sorted(by: { $0.attempt.ts > $1.attempt.ts }) {
+            if item.recordingStart == nil {
+                if now.timeIntervalSince(item.attempt.ts) >= grace { close.append(item.attempt) }
+            } else if seenLeads.insert(item.attempt.leadID).inserted {
+                offer.append(item)
+            }
+        }
+        return Triage(offer: offer, close: close)
+    }
+
     /// The recording that started within `maxDelay` after the dial (the user has to click
     /// Call and the other side has to answer). Earliest match wins; nil if none.
     public static func recording(after dial: Date, starts: [Date], maxDelay: TimeInterval = 300) -> Date? {

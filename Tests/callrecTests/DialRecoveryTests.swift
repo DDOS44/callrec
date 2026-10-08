@@ -43,3 +43,18 @@ private func attempt(_ ts: Date, _ id: String) -> DialLogEntry {
     let starts = DialRecovery.recordingStarts(on: DialFixture.at(8, 9), root: root, calendar: DialFixture.cal)
     #expect(Set(starts) == [DialFixture.at(8, 11, 10, 44), DialFixture.at(8, 12)])
 }
+
+@Test func triageOffersOnlyRecordedAttemptsOnePerLeadAndClosesOldUnrecordedOnes() {
+    let t = DialFixture.at(8, 12)
+    func item(_ id: String, _ lead: String, ago: TimeInterval, rec: Bool) -> DialRecovery.Unfinished {
+        let ts = t.addingTimeInterval(-ago)
+        return .init(attempt: .attempt(at: ts, id: id, list: "fake", leadID: lead, key: lead),
+                     recordingStart: rec ? ts.addingTimeInterval(20) : nil)
+    }
+    let r = DialRecovery.triage([
+        item("NEWREC", "A", ago: 300, rec: true), item("OLDREC", "A", ago: 900, rec: true),
+        item("GHOST", "A", ago: 600, rec: false), item("YOUNG", "B", ago: 30, rec: false),
+        item("OTHER", "C", ago: 400, rec: true)], now: t)
+    #expect(r.offer.map(\.id) == ["NEWREC", "OTHER"], "one card per lead, recorded only")
+    #expect(r.close.map(\.attemptID) == ["GHOST"], "old unrecorded closed; the young one is left alone")
+}

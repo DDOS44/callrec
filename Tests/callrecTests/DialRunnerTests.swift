@@ -19,10 +19,15 @@ private struct Rig {
     let dir: URL
     let runner: DialRunner
 
-    init(logURL: URL? = nil, snapshot: HistorySnapshot? = nil) throws {
+    init(logURL: URL? = nil, snapshot: HistorySnapshot? = nil, recordings: [(day: String, file: String)] = []) throws {
         if let snapshot { box.snapshot = snapshot }
         dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-runner-\(UUID())")
         try Paths.ensureDir(dir)
+        for rec in recordings {
+            let folder = dir.appendingPathComponent("recordings").appendingPathComponent(rec.day)
+            try Paths.ensureDir(folder)
+            FileManager.default.createFile(atPath: folder.appendingPathComponent(rec.file).path, contents: Data())
+        }
         let leads = try LeadImporter.parse("""
         company,phone,confidence
         Fake One,9000000001,high
@@ -268,7 +273,7 @@ private struct Rig {
                                       leadID: "9000000001", key: "9000000001")
     try DialLog.append(orphan, to: logURL)
 
-    let rig = try Rig(logURL: logURL)
+    let rig = try Rig(logURL: logURL, recordings: [(day: "2026-10-07", file: "11-50-10.m4a")])
     defer { Fs.remove(rig.dir) }
     let r = rig.runner
     equal(r.unfinished.map(\.id), ["ORPHAN"], "recover.found")
@@ -313,4 +318,43 @@ private struct Rig {
     r.saveWrapUp(outcome: "booked", notes: "", doNotCall: false)
     equal(r.queue.first { $0.id == "9000000001" }?.status, .called, "wrap.afterSave")
     equal(LeadQueue.counts(r.queue)[.called] ?? 0, 1, "wrap.summaryCalledCount")
+}
+
+// Regression (2026-10-08): the user dismissed the macOS "Click to Call" prompt, then pressed
+// Stop. The attempt had no result, so three identical "has no wrap-up" cards piled up.
+@MainActor @Test func stopWhileWaitingForTheCallClosesTheAttemptAsNotPlaced() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    if case .waitingForCall = r.session.phase {} else { Issue.record("stop.waiting: \(r.session.phase)"); return }
+    r.stop()
+    let results = r.dialLog.filter { $0.kind == .result }
+    equal(results.count, 1, "stop.oneResult")
+    equal(results.first?.result, .notPlaced, "stop.notPlaced")
+    expect(DialRecovery.unfinished(log: r.dialLog, now: rig.box.now).isEmpty, "stop.noOrphan")
+}
+
+@MainActor @Test func orphansWithoutARecordingAreClosedNotShownAndDuplicatesCollapse() async throws {
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-orphans-\(UUID())")
+    try Paths.ensureDir(dir)
+    defer { Fs.remove(dir) }
+    let logURL = dir.appendingPathComponent("dial-log.jsonl")
+    // Three attempts on the same lead, none with a recording (the "TEST call 2" pile-up),
+    // plus a fresh one that is still inside the grace window, plus one on another lead WITH a recording.
+    for (i, minute) in [10, 20, 30].enumerated() {
+        try DialLog.append(.attempt(at: DialFixture.at(7, 11, minute), id: "GHOST\(i)", list: "fake",
+                                    leadID: "9000000002", key: "9000000002"), to: logURL)
+    }
+    try DialLog.append(.attempt(at: DialFixture.at(7, 11, 59, 30), id: "FRESH", list: "fake",
+                                leadID: "9000000003", key: "9000000003"), to: logURL)
+    try DialLog.append(.attempt(at: DialFixture.at(7, 11, 50), id: "REAL", list: "fake",
+                                leadID: "9000000001", key: "9000000001"), to: logURL)
+    let rig = try Rig(logURL: logURL, recordings: [(day: "2026-10-07", file: "11-50-10.m4a")])
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    equal(r.unfinished.map(\.id), ["REAL"], "orphans.onlyTheRecordedOneIsOffered")
+    let closed = r.dialLog.filter { $0.kind == .result }.map(\.attemptID).sorted()
+    equal(closed, ["GHOST0", "GHOST1", "GHOST2"], "orphans.ghostsClosed")
+    expect(r.dialLog.filter { $0.kind == .result }.allSatisfy { $0.result == .notPlaced }, "orphans.closedAsNotPlaced")
 }

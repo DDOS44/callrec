@@ -324,3 +324,21 @@ private func wrapUp() -> DialSession {
     s.handle(.stop)
     expect(s.banner == "Will stop after this call.", "stop.bannerHonest", "banner: \(s.banner ?? "nil")")
 }
+
+// Regression (2026-10-08): Stop before the call started left the attempt with no result.
+@Test func stopOrPolicyStopBeforeTheCallStartedRecordsNotPlaced() {
+    for halt in [DialEvent.stop, .policyHalt(.stop(.policy(.wrongSIM(expected: "A", got: "B"))))] {
+        for dialedPhase in 0..<2 {
+            var s = started()
+            _ = s.handle(.dialChecked(now: t0, nextLeadID: lead, decision: .allowed))
+            if dialedPhase == 1 { _ = s.handle(.dialPlaced(now: later(1))) }
+            let fx = s.handle(halt)
+            equal(fx, [.recordNotPlaced(leadID: lead)], "stop.recordsNotPlaced.\(dialedPhase)")
+        }
+    }
+    // Stop in the countdown has no attempt to close; a stop mid-call waits for the wrap-up.
+    var c = started()
+    equal(c.handle(.stop), [], "stop.countdownNoEffect")
+    var o = onCall()
+    equal(o.handle(.stop), [], "stop.onCallNoEffect")
+}
