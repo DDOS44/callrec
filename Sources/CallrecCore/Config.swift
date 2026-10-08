@@ -58,6 +58,9 @@ public struct Config: Codable, Sendable {
     /// no-redial and the caps (test dials don't count toward them), with a 10 s gap,
     /// and may repeat in a list. Never put a prospect here. Config only, never in code.
     public var testNumbers: [String] = []
+    /// When a placed call does not connect, dial the lead's next number (its alt numbers) before
+    /// moving to the next lead. Every alt dial passes the same guardrails as a main number.
+    public var tryAltNumbers = true
 
     public init() {}
 
@@ -66,7 +69,7 @@ public struct Config: Codable, Sendable {
         case minCallSeconds, stopAfterSilentSeconds, vocabulary, speakerLabels
         case dailyCap, hourlyCap, gapSeconds, callingHours, callingDays, cooldownDays, coldSIM
         case dncPausePerDay, failurePauseCount, shortCallSeconds, notPlacedTimeoutSeconds
-        case dialerListPath, dialerCaller, testNumbers
+        case dialerListPath, dialerCaller, testNumbers, tryAltNumbers
     }
 
     /// Every key is optional so a config written by an older build, or by hand
@@ -99,6 +102,7 @@ public struct Config: Codable, Sendable {
         dialerListPath = try c.decodeIfPresent(String.self, forKey: .dialerListPath) ?? dialerListPath
         dialerCaller = try c.decodeIfPresent(String.self, forKey: .dialerCaller) ?? dialerCaller
         testNumbers = try c.decodeIfPresent([String].self, forKey: .testNumbers) ?? testNumbers
+        tryAltNumbers = try c.decodeIfPresent(Bool.self, forKey: .tryAltNumbers) ?? tryAltNumbers
     }
 
     /// Overridable for tests and for pointing the watcher at another app.

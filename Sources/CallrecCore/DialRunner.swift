@@ -78,6 +78,9 @@ public final class DialRunner: ObservableObject {
     private var dialedAt: Date?
     private var attempt: DialLogEntry?
     private var lookupInFlight = false
+    /// The dial sequence of the lead the session is working through (main + usable alts), fixed when the
+    /// lead is first picked so a list change mid-lead cannot shift which number is next.
+    private var activeSequence: (leadID: String, numbers: [String])?
     private var timer: Timer?
     private var rng = SystemRandomNumberGenerator()
     private struct PendingMarkdown { var callStart: Date; var lead: Lead; var outcome: String; var notes: String }
@@ -86,7 +89,7 @@ public final class DialRunner: ObservableObject {
     public init(_ services: Services) {
         self.services = services
         self.rules = services.config.dialRules
-        self.session = DialSession(notPlacedTimeout: rules.notPlacedTimeout)
+        self.session = DialSession(notPlacedTimeout: rules.notPlacedTimeout, shortCallSeconds: rules.shortCallSeconds)
         self.sessionStart = services.now()
         refreshQueue()
         reloadFiles()
@@ -122,6 +125,37 @@ public final class DialRunner: ObservableObject {
 
     public var current: QueueItem? { session.currentLeadID.flatMap { id in queue.first { $0.id == id } } }
     public var nextUp: QueueItem? { LeadQueue.nextUp(queue) }
+
+    /// Where the session stands in the current lead's numbers.
+    public struct NumberProgress: Equatable, Sendable {
+        public var leadID: String
+        public var index: Int
+        public var numbers: [String]
+        public var label: String { AltNumbers.label(index: index, count: numbers.count) }
+        public var number: String { numbers[index] }
+    }
+
+    public var numberProgress: NumberProgress? {
+        guard let plan = session.numberPlan, let seq = activeSequence, seq.leadID == plan.leadID,
+              seq.numbers.indices.contains(plan.index) else { return nil }
+        return NumberProgress(leadID: plan.leadID, index: plan.index, numbers: seq.numbers)
+    }
+
+    /// The lead in front of the user: the one on the line, else the one whose alt number is due, else the next in the queue.
+    public var focus: QueueItem? {
+        if let c = current { return c }
+        if let p = numberProgress, let item = queue.first(where: { $0.id == p.leadID }), item.status == .pending { return item }
+        return nextUp
+    }
+
+    /// Countdown text for a due alt number, e.g. "No answer on +91 … . Trying alt 1 of 2 (+91 …)".
+    public func altNotice(for countdown: DialSession.Countdown) -> String? {
+        guard countdown.altFallback, let p = numberProgress else { return nil }
+        return AltNumbers.notice(sequence: p.numbers, nextIndex: p.index, afterNoAnswer: countdown.afterNoAnswer)
+    }
+
+    /// Countdown button: give up on the lead's remaining numbers and move to the next lead.
+    public func skipRemainingNumbers() { perform(session.handle(.skipRemainingNumbers)) }
     public var rulesInForce: DialRules { rules }
 
     public var dialsToday: Int {
@@ -349,7 +383,7 @@ public final class DialRunner: ObservableObject {
                 callStart = state.since ?? now
                 perform(session.handle(.callStarted(now: now)))
             } else if !state.recording && was {
-                perform(session.handle(.callEnded(now: now)))
+                perform(session.handle(.callEnded(now: now, gap: rules.randomGap(using: &rng), minGap: rules.gapMin)))
             }
         }
         wasRecording = state.recording
@@ -371,7 +405,11 @@ public final class DialRunner: ObservableObject {
         case .dial(let id): dial(id)
         case .recordNotPlaced(let id): recordNotPlaced(id)
         case .lookUpCall(let id, let at): lookUp(id, dialedAt: at)
-        case .recordCallEnded(let id, let seconds, let connected): callEnded(id, seconds: seconds, connected: connected)
+        case .recordCallEnded(let id, let seconds, let connected):
+            callEnded(id, seconds: seconds, connected: connected, status: connected ? .called : .noAnswer)
+        case .recordUnanswered(let id, let seconds, let connected, let exhausted):
+            lastWrapUpEnd = services.now()   // the minimum gap runs from here, as after a wrap-up
+            callEnded(id, seconds: seconds, connected: connected, status: exhausted ? .noAnswer : nil)
         case .saveWrapUp(let id, let outcome, let notes): wrapUp(id, outcome: outcome, notes: notes)
         case .addToDoNotCall(let id): addToDNC(id)
         case .setLeadStatus(let id, let status): setStatus(id, status)
@@ -385,17 +423,27 @@ public final class DialRunner: ObservableObject {
 
     private func evaluateNext() {
         let now = services.now()
-        let next = nextUp
+        // A lead part-way through its numbers goes first, unless something changed its status meanwhile
+        // (skipped, do-not-call, moved back): then it is no longer ours to continue.
+        var next = nextUp
+        var number = next?.lead.number ?? ""
+        var count = 1
+        if let p = numberProgress, let item = queue.first(where: { $0.id == p.leadID }), item.status == .pending {
+            next = item; number = p.number; count = p.numbers.count
+        } else if let item = next {
+            let seq = AltNumbers.sequence(for: item.lead, dnc: dnc, enabled: services.config.tryAltNumbers)
+            activeSequence = (item.id, seq); count = seq.count
+        }
         var decision: DialDecision
         if logUnreadable {
             decision = .pause(.simUnverified)   // never dial without a readable log
         } else {
-            decision = DialPolicy.evaluate(number: next?.lead.number ?? "", now: now, rules: rules, log: dialLog, dnc: dnc,
+            decision = DialPolicy.evaluate(number: number, now: now, rules: rules, log: dialLog, dnc: dnc,
                                            history: snapshot?.lastCallByKey ?? [:], session: facts(), calendar: services.calendar)
             // With nothing left to dial, report the session-level answer, not "invalid number".
             if next == nil, decision == .blocked(.invalidNumber) { decision = .allowed }
         }
-        perform(session.handle(.dialChecked(now: now, nextLeadID: next?.id, decision: decision)))
+        perform(session.handle(.dialChecked(now: now, nextLeadID: next?.id, decision: decision, numberCount: count)))
     }
 
     private func append(_ entry: DialLogEntry) -> Bool {
@@ -415,7 +463,9 @@ public final class DialRunner: ObservableObject {
             return
         }
         let now = services.now()
-        let entry = DialLogEntry.attempt(at: now, list: services.listName, leadID: id, key: lead.number)
+        // The number to dial: the lead's main number, or the alt the session has moved on to.
+        let number = numberProgress.flatMap { $0.leadID == id ? $0.number : nil } ?? lead.number
+        let entry = DialLogEntry.attempt(at: now, list: services.listName, leadID: id, key: number)
         // The attempt is logged before the call is placed, so a crash can never leave an uncounted dial.
         guard append(entry) else {
             perform(session.handle(.dialFailed(message: "the dial could not be logged, so it was not placed")))
@@ -423,8 +473,9 @@ public final class DialRunner: ObservableObject {
         }
         attempt = entry
         dialedAt = now
+        callStart = nil   // this call's recording start, once it begins; never the previous call's
         do {
-            try services.dialer.dial(number: lead.number)
+            try services.dialer.dial(number: number)
         } catch {
             perform(session.handle(.dialFailed(message: error.localizedDescription)))
             return
@@ -447,18 +498,21 @@ public final class DialRunner: ObservableObject {
             do {
                 let snap = try await load()
                 snapshot = snap
-                if let row = SIMDetector.call(forNumber: lead.number, dialedAt: dialedAt, rows: snap.rows) {
-                    perform(session.handle(.dialResolved(.placed(seconds: row.seconds), now: services.now())))
+                if let row = SIMDetector.call(forNumber: attempt?.key ?? lead.number, dialedAt: dialedAt, rows: snap.rows) {
+                    perform(session.handle(.dialResolved(.placed(seconds: row.seconds), now: services.now(),
+                                                         gap: rules.randomGap(using: &rng), minGap: rules.gapMin)))
                 }
             } catch { historyFailed(error, doing: "to check the dial") }
         }
     }
 
-    private func callEnded(_ id: String, seconds: Int, connected: Bool) {
+    /// Logs how a dial ended. `status` is the lead's new status, or nil to leave it (a multi-number
+    /// lead whose next number is still to be tried).
+    private func callEnded(_ id: String, seconds: Int, connected: Bool, status: LeadStatus?) {
         let ended = services.now()
         let start = callStart
         update(id) {
-            $0.status = connected ? .called : .noAnswer
+            if let status { $0.status = status }
             if let start { $0.callID = Self.callID(start) }
         }
         guard let a = attempt, a.leadID == id else { return }
@@ -536,10 +590,15 @@ public final class DialRunner: ObservableObject {
 
     private func addToDNC(_ id: String) {
         guard let lead = services.leads.leads.first(where: { $0.id == id }) else { return }
-        do {
-            try DNCList.add(lead.number, now: services.now(), to: services.dncURL)
-            dnc = try DNCList.load(from: services.dncURL)
-        } catch { alert("Could not add the number to the do-not-call list: \(error.localizedDescription)") }
+        // The main number and every alt number: a person who asked not to be called asked it of the firm.
+        let now = services.now()
+        for number in AltNumbers.allNumbers(of: lead) {
+            do {
+                try DNCList.add(number, now: now, altOf: number == lead.number ? nil : lead.number, to: services.dncURL)
+            } catch { alert("Could not add \(PhoneNumber.display(number)) to the do-not-call list: \(error.localizedDescription)") }
+        }
+        do { dnc = try DNCList.load(from: services.dncURL) }
+        catch { alert("Could not read the do-not-call list after adding to it: \(error.localizedDescription)") }
     }
 
     private func setStatus(_ id: String, _ status: LeadStatus) { update(id) { $0.status = status } }

@@ -7,6 +7,8 @@ public struct DNCList: Equatable, Sendable {
     public struct Entry: Equatable, Sendable {
         public var key: String
         public var addedAt: Date?
+        /// Set for an alt number listed together with its lead's main number (`# <time>  alt of <main>`).
+        public var altOf: String?
     }
 
     public private(set) var entries: [Entry]
@@ -26,9 +28,11 @@ public struct DNCList: Equatable, Sendable {
         return keys.contains(k)
     }
 
-    /// Entries added on the same calendar day as `now`.
+    /// Do-not-call additions on the same calendar day as `now`. An alt number listed together with its
+    /// lead's main number is not counted again: "Do not call again" on one lead is one complaint-risk
+    /// event, not one per number.
     public func addedToday(now: Date, calendar: Calendar) -> Int {
-        entries.filter { $0.addedAt.map { calendar.isDate($0, inSameDayAs: now) } ?? false }.count
+        entries.filter { $0.altOf == nil && ($0.addedAt.map { calendar.isDate($0, inSameDayAs: now) } ?? false) }.count
     }
 
     // MARK: - File
@@ -45,8 +49,14 @@ public struct DNCList: Equatable, Sendable {
                 logError("dnc: unreadable line in \(url.lastPathComponent) (kept, treated as no number)")
                 continue
             }
-            let when = parts.count > 1 ? ISO8601DateFormatter().date(from: parts[1].trimmingCharacters(in: .whitespaces)) : nil
-            entries.append(Entry(key: key, addedAt: when))
+            let comment = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
+            let words = comment.split(separator: " ", maxSplits: 1).map(String.init)
+            let when = words.first.flatMap { ISO8601DateFormatter().date(from: $0) }
+            var altOf: String?
+            if words.count > 1, let r = words[1].range(of: "alt of ") {
+                altOf = PhoneNumber.key(String(words[1][r.upperBound...]))
+            }
+            entries.append(Entry(key: key, addedAt: when, altOf: altOf))
         }
         return DNCList(entries: entries, unreadable: bad)
     }
@@ -63,10 +73,12 @@ public struct DNCList: Equatable, Sendable {
     /// Adds a number to the file. Idempotent: a number already listed is not written again
     /// (returns false). Throws if it is not a number or the write fails; the caller must show that.
     @discardableResult
-    public static func add(_ number: String, now: Date = Date(), to url: URL = DialerPaths.dnc) throws -> Bool {
+    public static func add(_ number: String, now: Date = Date(), altOf main: String? = nil,
+                           to url: URL = DialerPaths.dnc) throws -> Bool {
         guard let key = PhoneNumber.key(number) else { throw AddError.notANumber(number) }
         if try load(from: url).keys.contains(key) { return false }
-        try AppendLog.append("\(key)  # \(ISO8601DateFormatter().string(from: now))", to: url)
+        let note = main.flatMap { PhoneNumber.key($0) }.map { "  alt of \($0)" } ?? ""
+        try AppendLog.append("\(key)  # \(ISO8601DateFormatter().string(from: now))\(note)", to: url)
         return true
     }
 }
