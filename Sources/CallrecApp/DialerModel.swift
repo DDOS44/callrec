@@ -86,7 +86,9 @@ final class DialerModel: ObservableObject {
                 return .init(recording: s.state == "recording", since: ISO8601DateFormatter().date(from: s.since))
             },
             // Only the recorder (which holds Full Disk Access) reads call history; ask it.
-            loadHistory: { try await Self.askRecorder(days: max(config.cooldownDays, 1)) },
+            // A year, not just the cooldown window: iPhone reuses the line last used with a
+            // number, so an old call from the main SIM matters for the "called before" warning.
+            loadHistory: { try await Self.askRecorder(days: max(config.cooldownDays, 365)) },
             applyToMarkdown: { start, lead, outcome, notes in
                 try DialMarkdown.apply(root: root, callStart: start, lead: lead, outcome: outcome, notes: notes)
             },

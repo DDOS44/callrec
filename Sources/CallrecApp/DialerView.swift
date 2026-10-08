@@ -106,7 +106,8 @@ private struct DialerSession: View {
                 stateCard
                 controls
                 if let item = runner.current ?? runner.nextUp {
-                    LeadCard(item: item, heading: runner.current == nil ? "Next up" : "Calling")
+                    LeadCard(item: item, heading: runner.current == nil ? "Next up" : "Calling",
+                             calledBefore: runner.snapshot?.lastCallByKey[item.lead.number])
                 }
                 queue
             }
@@ -152,7 +153,7 @@ private struct DialerSession: View {
         case .dialing, .waitingForCall, .resolvingDial:
             HStack(spacing: 10) {
                 ProgressView().controlSize(.small)
-                Text("Dialing. If macOS asks, click Call. Waiting for the call to start.")
+                Text("Click Call in the macOS prompt. Check it shows your cold SIM first.")
             }
         case .onCall(_, let startedAt):
             VStack(alignment: .leading, spacing: 10) {
@@ -254,6 +255,8 @@ private struct CountdownView: View {
 private struct LeadCard: View {
     let item: QueueItem
     let heading: String
+    /// Last time this number appears in call history (either direction), if ever.
+    var calledBefore: Date?
 
     var body: some View {
         let lead = item.lead
@@ -268,6 +271,15 @@ private struct LeadCard: View {
                 .font(.subheadline).foregroundStyle(.secondary)
             if !lead.whatTheyDo.isEmpty { field("What they do", lead.whatTheyDo) }
             if !lead.angle.isEmpty { field("Angle", lead.angle) }
+            if let when = calledBefore {
+                // iPhone dials a number on the line last used with it, overriding the
+                // Default Voice Line. A prospect once called from the main SIM would go
+                // out on the main SIM again.
+                Label("Called before on \(when.formatted(date: .abbreviated, time: .shortened)). Your iPhone may use the SIM from that call. Check the prompt.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -388,7 +400,7 @@ private struct PreflightSheet: View {
                 }
             }
         } else {
-            Toggle("Default Voice Line is the cold SIM", isOn: Binding(get: { runner.preflightItems().first { $0.id == "sim" }?.state == .ok },
+            Toggle("Default Voice Line is the cold SIM, and I'll check the SIM in every Call prompt", isOn: Binding(get: { runner.preflightItems().first { $0.id == "sim" }?.state == .ok },
                                                                       set: { runner.confirmManualSIM($0) }))
         }
     }

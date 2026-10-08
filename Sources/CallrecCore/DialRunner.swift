@@ -195,7 +195,7 @@ public final class DialRunner: ObservableObject {
                                state: ok ? .ok : .fail))
         } else {
             items.append(.init(id: "sim", title: "Cold SIM",
-                               detail: "Cannot be read on this Mac. iPhone Settings > Cellular > Default Voice Line = cold SIM.",
+                               detail: "Cannot be read on this Mac. Set iPhone Settings > Cellular > Default Voice Line = cold SIM, and check the SIM shown in each macOS Call prompt (numbers called before use the SIM from last time).",
                                state: manualSIMConfirmed ? .ok : .manual))
         }
         return items
