@@ -8,7 +8,9 @@ struct ContentView: View {
         NavigationSplitView {
             Sidebar()
         } content: {
-            if model.selectedDay == AppModel.dialerTag { DialerListColumn() } else { CallListColumn() }
+            if model.selectedDay == AppModel.dialerTag { DialerListColumn() }
+            else if model.selectedDay == AppModel.calendarTag { CalendarColumn() }
+            else { CallListColumn() }
         } detail: {
             if model.selectedDay == AppModel.dialerTag { DialerMainColumn() } else { DetailColumn() }
         }
@@ -68,6 +70,10 @@ struct Sidebar: View {
                 Label("Power dialer", systemImage: "phone.arrow.up.right")
                     .tag(AppModel.dialerTag)
             }
+            Section("Calendar") {
+                Label("Calendar", systemImage: "calendar.day.timeline.left")
+                    .tag(AppModel.calendarTag)
+            }
             Section("Days") {
                 Label("All calls", systemImage: "tray.full")
                     .badge(model.allCalls.count)
@@ -97,24 +103,33 @@ struct CallListColumn: View {
         VStack(spacing: 0) {
             StatsHeader()
             Divider()
-            if model.visibleCalls.isEmpty {
-                emptyState
-            } else {
-                List(model.visibleCalls, selection: Binding(get: { model.selectedCalls }, set: { model.setSelection($0) })) { call in
-                    CallRow(call: call, showDay: model.selectedDay == AppModel.allDaysTag)
-                        .tag(call.id)
-                }
-                .contextMenu(forSelectionType: String.self) { ids in
-                    Button("Move to Trash…", systemImage: "trash") { model.requestTrash(ids) }
-                }
-                .onDeleteCommand { model.requestTrash() }
-                // No .alternatingRowBackgrounds(): it keeps painting striped
-                // rows below the last call, which read as empty placeholders.
-                .listStyle(.inset)
-            }
+            CallListBody()
         }
         .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
         .navigationTitle(model.columnTitle)
+    }
+}
+
+/// The list of calls in the middle column, with the empty state. Shared by the day list and the calendar.
+struct CallListBody: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        if model.visibleCalls.isEmpty {
+            emptyState
+        } else {
+            List(model.visibleCalls, selection: Binding(get: { model.selectedCalls }, set: { model.setSelection($0) })) { call in
+                CallRow(call: call, showDay: model.selectedDay == AppModel.allDaysTag)
+                    .tag(call.id)
+            }
+            .contextMenu(forSelectionType: String.self) { ids in
+                Button("Move to Trash…", systemImage: "trash") { model.requestTrash(ids) }
+            }
+            .onDeleteCommand { model.requestTrash() }
+            // No .alternatingRowBackgrounds(): it keeps painting striped
+            // rows below the last call, which read as empty placeholders.
+            .listStyle(.inset)
+        }
     }
 
     private var emptyState: some View {
@@ -123,7 +138,7 @@ struct CallListColumn: View {
             Image(systemName: model.search.isEmpty ? "phone.badge.waveform" : "magnifyingglass")
                 .font(.system(size: 30))
                 .foregroundStyle(.tertiary)
-            Text(model.search.isEmpty ? "No calls yet today" : "Nothing matches “\(model.search)”")
+            Text(model.search.isEmpty ? emptyTitle : "Nothing matches \u{201C}\(model.search)\u{201D}")
                 .font(.headline)
             Text(model.statusLine)
                 .font(.subheadline)
@@ -131,6 +146,10 @@ struct CallListColumn: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var emptyTitle: String {
+        model.selectedDay == AppModel.calendarTag ? "No calls on this day" : "No calls yet today"
     }
 }
 

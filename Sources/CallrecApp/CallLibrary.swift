@@ -51,6 +51,7 @@ struct Call: Identifiable, Hashable {
     var connected: Bool { seconds >= 20 }
     /// Test calls are excluded from the counters.
     var isTest: Bool { outcome == Outcome.test.rawValue }
+    var facts: CallFacts { CallFacts(date: date, seconds: seconds, outcome: outcome) }
     var booked: Bool { outcome.lowercased() == "booked" }
 
     static func == (a: Call, b: Call) -> Bool { a.id == b.id && a.outcome == b.outcome && a.who == b.who && a.notes == b.notes }

@@ -6,11 +6,16 @@ import Foundation
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var days: [Day] = []
+    @Published var days: [Day] = [] { didSet { recomputeDerived() } }
     @Published var selectedDay: String?
     @Published var selectedCall: String?
     /// Everything highlighted in the call list (Cmd/Shift-click). `selectedCall` is the one the detail column shows.
     @Published var selectedCalls: Set<String> = []
+    /// First day of the month the calendar shows, and the day picked in it ("yyyy-MM-dd").
+    @Published var calendarMonth: Date = Date() { didSet { recomputeDerived() } }
+    @Published var calendarDay: String? = CallCalendar.key(Date(), calendar: .current)
+    /// Derived from `days` and `calendarMonth` whenever either changes, never in a view body.
+    @Published private(set) var monthSummary = CallCalendar.Month()
     /// Calls waiting for the "Move to Trash" confirmation.
     @Published var pendingTrash: [String] = []
     @Published var trashProblem: String?
@@ -75,7 +80,7 @@ final class AppModel: ObservableObject {
         let previous = selectedCall
         days = loaded
         lastCallAt = loaded.first?.calls.first?.date
-        if selectedDay == nil || !(days.contains(where: { $0.name == selectedDay }) || selectedDay == AppModel.dialerTag) {
+        if selectedDay == nil || !(days.contains(where: { $0.name == selectedDay }) || AppModel.isVirtual(selectedDay)) {
             selectedDay = days.first?.name
         }
         if previous == nil || !allCalls.contains(where: { $0.id == previous }) {
@@ -153,16 +158,45 @@ final class AppModel: ObservableObject {
 
     static let allDaysTag = "__all__"
     static let dialerTag = "__dialer__"
+    static let calendarTag = "__calendar__"
+
+    private func recomputeDerived() {
+        monthSummary = CallCalendar.summarize(allCalls.map(\.facts), month: calendarMonth, calendar: .current)
+    }
+
+    /// Sidebar rows that are not a day folder.
+    static func isVirtual(_ tag: String?) -> Bool {
+        tag == dialerTag || tag == calendarTag || tag == allDaysTag
+    }
+
+    func pickCalendarDay(_ key: String) {
+        calendarDay = key
+        select(callsForCalendarDay.first?.id)
+    }
+
+    func showToday() {
+        calendarMonth = Date()
+        pickCalendarDay(CallCalendar.key(Date(), calendar: .current))
+    }
+
+    func shiftMonth(by n: Int) { calendarMonth = CallCalendar.shift(calendarMonth, by: n, calendar: .current) }
+
+    var callsForCalendarDay: [Call] {
+        filteredDays.first(where: { $0.name == calendarDay })?.calls ?? []
+    }
 
     var allCalls: [Call] { days.flatMap(\.calls) }
 
     /// The calls shown in the middle column: one day, or everything.
     var visibleCalls: [Call] {
-        selectedDay == AppModel.allDaysTag ? filteredDays.flatMap(\.calls) : callsForSelectedDay
+        if selectedDay == AppModel.allDaysTag { return filteredDays.flatMap(\.calls) }
+        if selectedDay == AppModel.calendarTag { return callsForCalendarDay }
+        return callsForSelectedDay
     }
 
     var columnTitle: String {
         if selectedDay == AppModel.allDaysTag { return "All calls" }
+        if selectedDay == AppModel.calendarTag { return "Calendar" }
         return filteredDays.first(where: { $0.name == selectedDay })?.pretty ?? "Calls"
     }
 
