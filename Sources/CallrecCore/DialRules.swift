@@ -14,6 +14,9 @@ public struct DialRules: Equatable, Sendable {
     /// ISO weekdays, 1 = Monday ... 7 = Sunday.
     public var days: Set<Int> = [1, 2, 3, 4, 5, 6]
     public var cooldownDays = 7
+    /// Normalised keys of the user's own test numbers (see Config.testNumbers).
+    public var testKeys: Set<String> = []
+    public var testGapMin: TimeInterval = 10
     public var dncPausePerDay = 3
     public var failurePauseCount = 3
     public var shortCallSeconds = 5
@@ -46,6 +49,7 @@ public struct DialRules: Equatable, Sendable {
             days = valid
         }
         cooldownDays = max(config.cooldownDays, 0)
+        testKeys = Set(config.testNumbers.compactMap { PhoneNumber.normalize($0) })
         dncPausePerDay = max(config.dncPausePerDay, 1)
         failurePauseCount = max(config.failurePauseCount, 1)
         shortCallSeconds = max(config.shortCallSeconds, 0)

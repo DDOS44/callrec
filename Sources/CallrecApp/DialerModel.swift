@@ -36,7 +36,7 @@ final class DialerModel: ObservableObject {
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: csv.path)
             }
             let config = Config.load()
-            let result = try LeadImporter.load(csv, caller: config.dialerCaller)
+            let result = try LeadImporter.load(csv, caller: config.dialerCaller, repeatable: config.dialRules.testKeys)
             let name = csv.deletingPathExtension().lastPathComponent
             // The rejected rows are written next to the list so they can be fixed and never get lost.
             let report = DialerPaths.listsDir.appendingPathComponent("\(name).rejected.txt")

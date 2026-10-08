@@ -25,9 +25,12 @@ public enum LeadConfidence: Int, Comparable, Codable, Sendable {
 }
 
 /// One callable row of an imported list. The id is the 10-digit number, so it is
-/// stable across re-imports and reordering; a number appears once per list.
+/// stable across re-imports and reordering; a number appears once per list —
+/// except the user's own test numbers, whose repeats get "#2", "#3"… so ids stay unique.
 public struct Lead: Identifiable, Equatable, Sendable {
-    public var id: String { number }
+    public var id: String { repeatIndex <= 1 ? number : "\(number)#\(repeatIndex)" }
+    /// 1 for the first occurrence of a number in the list; >1 only for test-number repeats.
+    public var repeatIndex: Int = 1
     public var number: String
     public var company: String
     public var city: String
@@ -119,17 +122,17 @@ public enum LeadImporter {
         return h.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
-    public static func load(_ url: URL, caller: String = "") throws -> LeadImport {
+    public static func load(_ url: URL, caller: String = "", repeatable: Set<String> = []) throws -> LeadImport {
         guard let text = Fs.text(url) else {
             throw NSError(domain: "callrec", code: 41, userInfo: [NSLocalizedDescriptionKey: "Could not read \(url.path)."])
         }
-        return try parse(text, caller: caller)
+        return try parse(text, caller: caller, repeatable: repeatable)
     }
 
     /// Parses CSV text. Throws only when the header lacks `company` or `phone`; a bad row is
     /// reported, never fatal. `caller` keeps only rows whose `caller` column matches
     /// (case-insensitive); with no `caller` column in the file every row is kept.
-    public static func parse(_ text: String, caller: String = "") throws -> LeadImport {
+    public static func parse(_ text: String, caller: String = "", repeatable: Set<String> = []) throws -> LeadImport {
         let rows = LeadSheet.parse(text)
         guard let header = rows.first, header.contains(where: { !$0.isEmpty }) else { throw LeadImportError.empty }
 
@@ -152,6 +155,7 @@ public enum LeadImporter {
         let wantedCaller = caller.trimmingCharacters(in: .whitespaces).lowercased()
         var out = LeadImport(leads: [], rejected: [], filteredOut: 0, warnings: [], blankRows: 0)
         var seen: [String: Int] = [:]
+        var occurrences: [String: Int] = [:]
         var order = 0
 
         for (offset, row) in rows.dropFirst().enumerated() {
@@ -169,12 +173,13 @@ public enum LeadImporter {
                 out.rejected.append(RejectedRow(line: line, company: company, phone: phone, reason: why))
                 continue
             }
-            if let first = seen[number] {
+            if !repeatable.contains(number), let first = seen[number] {
                 out.rejected.append(RejectedRow(line: line, company: company, phone: phone,
                                                 reason: "duplicate of the number on line \(first)"))
                 continue
             }
-            seen[number] = line
+            if seen[number] == nil { seen[number] = line }
+            occurrences[number, default: 0] += 1
             order += 1
 
             let altRaw = cell(row, .altNumber)
@@ -184,10 +189,12 @@ public enum LeadImporter {
                 if alt == nil { out.warnings.append("line \(line): alt number is not a valid 10-digit number, ignored") }
                 if alt == number { alt = nil }
             }
-            out.leads.append(Lead(number: number, company: company, city: cell(row, .city), owner: cell(row, .owner),
-                                  whatTheyDo: cell(row, .whatTheyDo), angle: cell(row, .angle),
-                                  confidence: LeadConfidence(text: cell(row, .confidence)), altNumber: alt,
-                                  caller: cell(row, .caller), order: order))
+            var lead = Lead(number: number, company: company, city: cell(row, .city), owner: cell(row, .owner),
+                            whatTheyDo: cell(row, .whatTheyDo), angle: cell(row, .angle),
+                            confidence: LeadConfidence(text: cell(row, .confidence)), altNumber: alt,
+                            caller: cell(row, .caller), order: order)
+            lead.repeatIndex = occurrences[number] ?? 1
+            out.leads.append(lead)
         }
         return out
     }

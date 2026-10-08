@@ -133,11 +133,16 @@ public enum DialPolicy {
         if session.callActive { return .blocked(.callActive) }
         guard let key = PhoneNumber.normalize(number) ?? PhoneNumber.key(number) else { return .blocked(.invalidNumber) }
         if dnc.contains(number) { return .blocked(.doNotCall) }
-        if let until = cooldownEnd(key: key, now: now, rules: rules, log: log, history: history) { return .blocked(.cooldown(until: until)) }
-        if let block = hoursBlock(now: now, rules: rules, calendar: calendar) { return .blocked(block) }
-        if let block = capBlock(now: now, rules: rules, log: log, calendar: calendar) { return .blocked(block) }
+        // The user's own test numbers skip cooldown, hours and caps. Everything else
+        // (active call, DNC, SIM confirmation, pauses, stops) still applies.
+        let isTest = rules.testKeys.contains(key)
+        if !isTest {
+            if let until = cooldownEnd(key: key, now: now, rules: rules, log: log, history: history) { return .blocked(.cooldown(until: until)) }
+            if let block = hoursBlock(now: now, rules: rules, calendar: calendar) { return .blocked(block) }
+            if let block = capBlock(now: now, rules: rules, log: log, calendar: calendar) { return .blocked(block) }
+        }
         if let last = session.lastWrapUpEnd {
-            let until = last.addingTimeInterval(rules.gapMin)
+            let until = last.addingTimeInterval(isTest ? rules.testGapMin : rules.gapMin)
             if now < until { return .blocked(.gapNotElapsed(until: until)) }
         }
         if session.expectedSIM == nil, !session.manualSIMConfirmed { return .blocked(.coldSIMNotConfirmed) }
@@ -236,7 +241,8 @@ public enum DialPolicy {
     }
 
     static func capBlock(now: Date, rules: DialRules, log: [DialLogEntry], calendar: Calendar) -> DialBlock? {
-        let attempts = log.filter { $0.kind == .attempt }
+        // Test dials to the user's own numbers never count against the real caps.
+        let attempts = log.filter { $0.kind == .attempt && !rules.testKeys.contains($0.key) }
         let today = attempts.filter { calendar.isDate($0.ts, inSameDayAs: now) }
         if today.count >= rules.dailyCap {
             let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86_400)

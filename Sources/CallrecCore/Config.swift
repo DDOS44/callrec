@@ -54,6 +54,10 @@ public struct Config: Codable, Sendable {
     public var dialerListPath = ""
     /// Only dial rows whose `caller` column equals this. Empty = every row.
     public var dialerCaller = ""
+    /// YOUR OWN numbers for testing the dialer. Exempt from calling hours, the 7-day
+    /// no-redial and the caps (test dials don't count toward them), with a 10 s gap,
+    /// and may repeat in a list. Never put a prospect here. Config only, never in code.
+    public var testNumbers: [String] = []
 
     public init() {}
 
@@ -62,7 +66,7 @@ public struct Config: Codable, Sendable {
         case minCallSeconds, stopAfterSilentSeconds, vocabulary, speakerLabels
         case dailyCap, hourlyCap, gapSeconds, callingHours, callingDays, cooldownDays, coldSIM
         case dncPausePerDay, failurePauseCount, shortCallSeconds, notPlacedTimeoutSeconds
-        case dialerListPath, dialerCaller
+        case dialerListPath, dialerCaller, testNumbers
     }
 
     /// Every key is optional so a config written by an older build, or by hand
@@ -94,6 +98,7 @@ public struct Config: Codable, Sendable {
         notPlacedTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .notPlacedTimeoutSeconds) ?? notPlacedTimeoutSeconds
         dialerListPath = try c.decodeIfPresent(String.self, forKey: .dialerListPath) ?? dialerListPath
         dialerCaller = try c.decodeIfPresent(String.self, forKey: .dialerCaller) ?? dialerCaller
+        testNumbers = try c.decodeIfPresent([String].self, forKey: .testNumbers) ?? testNumbers
     }
 
     /// Overridable for tests and for pointing the watcher at another app.
