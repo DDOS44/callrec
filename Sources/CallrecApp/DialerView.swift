@@ -147,7 +147,25 @@ private struct DialerSession: View {
     @ViewBuilder private var stateCard: some View {
         switch phase {
         case .idle, .stopped:
-            Text("Not running. \(runner.dialsToday) dials today.").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(runner.unfinished) { item in
+                    let title = runner.queue.first { $0.id == item.attempt.leadID }?.lead.title ?? item.attempt.leadID
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(title) has no wrap-up").font(.headline)
+                            Text("Dialled \(item.attempt.ts.formatted(date: .omitted, time: .shortened)); the session was interrupted"
+                                 + (item.recordingStart == nil ? "." : ". Notes will go into that call's transcript."))
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Finish wrap-up") { runner.recover(item) }.buttonStyle(.borderedProminent)
+                    }
+                    .padding(12)
+                    .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                }
+                Text("Not running. \(runner.dialsToday) dials today.").foregroundStyle(.secondary)
+            }
         case .preflight:
             Text("Pre-flight checklist…").foregroundStyle(.secondary)
         case .dialing, .waitingForCall, .resolvingDial:

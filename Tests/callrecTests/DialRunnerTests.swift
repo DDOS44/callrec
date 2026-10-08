@@ -31,8 +31,10 @@ private struct Rig {
         """)
         let store = try LeadStateStore(url: dir.appendingPathComponent("fake.state.json"), listName: "fake")
         let box = self.box
+        // Isolated from the real ~/CallRecordings: tests must never read the user's data.
+        var config = Config(); config.recordingsDir = dir.appendingPathComponent("recordings").path
         let services = DialRunner.Services(
-            dialer: dialer, config: Config(), listName: "fake", leads: leads, store: store,
+            dialer: dialer, config: config, listName: "fake", leads: leads, store: store,
             dialLogURL: logURL ?? dir.appendingPathComponent("dial-log.jsonl"), dncURL: dir.appendingPathComponent("dnc.txt"),
             calendar: DialFixture.cal, now: { box.now },
             callState: { .init(recording: box.recording, since: box.since) },
@@ -251,4 +253,32 @@ private struct Rig {
     rig.advance(100); r.tick(); await rig.settle()
     if case .paused(.policy(.historyUnavailable)) = r.session.phase {} else { Issue.record("histdown.paused: \(r.session.phase)") }
     equal(rig.dialer.dialed.count, 1, "histdown.neverContinues")
+}
+
+
+// Regression (2026-10-08): a relaunch mid-call left a dialled call with no wrap-up.
+@MainActor @Test func anInterruptedCallIsOfferedForWrapUpOnLaunch() async throws {
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-recover-\(UUID())")
+    try Paths.ensureDir(dir)
+    defer { Fs.remove(dir) }
+    let logURL = dir.appendingPathComponent("dial-log.jsonl")
+    let orphan = DialLogEntry.attempt(at: DialFixture.at(7, 11, 50), id: "ORPHAN", list: "fake",
+                                      leadID: "9000000001", key: "9000000001")
+    try DialLog.append(orphan, to: logURL)
+
+    let rig = try Rig(logURL: logURL)
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    equal(r.unfinished.map(\.id), ["ORPHAN"], "recover.found")
+
+    r.recover(r.unfinished[0])
+    if case .wrapUp(let w) = r.session.phase { expect(w.recovered, "recover.flag", "not marked recovered") }
+    else { Issue.record("recover.opensWrapUp: \(r.session.phase)") }
+
+    r.saveWrapUp(outcome: "pitched", notes: "recovered note", doNotCall: false)
+    equal(r.session.phase, .idle, "recover.backToIdleNoNextDial")
+    expect(rig.dialer.dialed.isEmpty, "recover.neverDials", "dialled during recovery: \(rig.dialer.dialed)")
+    expect(r.unfinished.isEmpty, "recover.closed", "still offered: \(r.unfinished.map(\.id))")
+    let reloaded = try DialLog.load(from: logURL).entries
+    expect(reloaded.contains { $0.kind == .result && $0.attemptID == "ORPHAN" }, "recover.resultLogged", "no result written")
 }

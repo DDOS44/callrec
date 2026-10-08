@@ -81,6 +81,8 @@ public enum DialEvent: Equatable, Sendable {
     case dialResolved(DialResolution, now: Date)
     /// Save in the wrap-up sheet. `gap` is the random gap, drawn by the runner.
     case wrapUpSaved(now: Date, outcome: String, notes: String, doNotCall: Bool, gap: TimeInterval, minGap: TimeInterval)
+    /// Open a wrap-up for a call left unfinished by an interrupted session. Idle/stopped only.
+    case recover(leadID: String)
     case doNotCallAgain
     case pauseAfterThisCall
     case pause
@@ -108,6 +110,8 @@ public struct DialSession: Equatable, Sendable {
         public var seconds: Int
         /// False when the call rang out and never connected.
         public var connected: Bool
+        /// Finishing a call from an interrupted session: saving returns to idle, no next dial.
+        public var recovered: Bool = false
     }
 
     public struct Countdown: Equatable, Sendable {
@@ -225,6 +229,13 @@ public struct DialSession: Equatable, Sendable {
             phase = .countdown(c)
             return [.evaluateNext]
         case .stop: return request(.stop(.user))
+        case .recover(let id):
+            switch phase {
+            case .idle, .stopped:
+                phase = .wrapUp(WrapUp(leadID: id, seconds: 0, connected: true, recovered: true))
+            default: break
+            }
+            return []
         case .policyHalt(let halt): return request(halt)
         }
     }
@@ -356,6 +367,7 @@ public struct DialSession: Equatable, Sendable {
         guard case .wrapUp(let w) = phase else { return [] }
         var effects: [DialEffect] = [.saveWrapUp(leadID: w.leadID, outcome: outcome, notes: notes)]
         if dnc { effects += [.addToDoNotCall(leadID: w.leadID), .setLeadStatus(leadID: w.leadID, status: .doNotCall)] }
+        if w.recovered { phase = .idle; return effects }
         phase = .countdown(Countdown(until: now.addingTimeInterval(gap), minGapUntil: now.addingTimeInterval(minGap), blocked: nil))
         applyHaltIfAny()
         return effects
