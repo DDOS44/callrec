@@ -167,7 +167,13 @@ public struct DialSession: Equatable, Sendable {
 
     /// The message to show in a banner, from a halt that is waiting or already in force.
     public var banner: String? {
-        if let h = pendingHalt { return h.message }
+        if let h = pendingHalt {
+            // Not in force yet: say what will happen, not what has happened.
+            switch h {
+            case .stop: return "Will stop after this call. \(h.message)"
+            case .pause: return "Will pause after this call. \(h.message)"
+            }
+        }
         switch phase {
         case .paused(let r): return r.message
         case .stopped(let r): return r.message
@@ -373,7 +379,15 @@ public struct DialSession: Equatable, Sendable {
             return []
         case .preflight, .countdown:
             phase = Self.phase(for: halt)
-        case .dialing, .waitingForCall, .resolvingDial, .onCall, .wrapUp:
+        case .dialing, .waitingForCall, .resolvingDial:
+            // No conversation yet, so nothing to protect: a Stop takes effect now
+            // (it used to wait up to ~2 min for the not-placed timeout while the UI
+            // said "Stopped" over a "Dialing…" spinner). A pause still waits, so a call
+            // that does connect gets its wrap-up.
+            if case .stop = halt { pendingHalt = nil; phase = Self.phase(for: halt) }
+            else if pendingHalt == nil { pendingHalt = halt }
+        case .onCall, .wrapUp:
+            // Mid-call or wrap-up: wait, so notes are never lost.
             if case .stop = halt { pendingHalt = halt }
             else if pendingHalt == nil { pendingHalt = halt }
         }

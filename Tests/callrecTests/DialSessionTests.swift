@@ -306,3 +306,21 @@ private func wrapUp() -> DialSession {
     expect(TelURL.url(for: "12345") == nil, "tel.invalid")
     expect(TelURL.url(for: "") == nil, "tel.empty")
 }
+
+// Regression (2026-10-07): Stop while waiting for the call to start showed "Stopped"
+// over a still-spinning "Dialing…" for up to ~2 minutes.
+@Test func stopBeforeTheCallConnectsAppliesImmediately() {
+    var s = started()
+    _ = s.handle(.dialChecked(now: t0, nextLeadID: lead, decision: .allowed))
+    _ = s.handle(.dialPlaced(now: later(1)))
+    s.handle(.stop)
+    equal(s.phase, .stopped(.user), "stop.immediateWhileWaiting")
+    expect(s.pendingHalt == nil, "stop.noPending", "pending halt left behind")
+    expect(!s.isRunning, "stop.notRunning", "still running after stop")
+}
+
+@Test func pendingStopBannerSaysWillStop() {
+    var s = onCall()
+    s.handle(.stop)
+    expect(s.banner?.hasPrefix("Will stop after this call") == true, "stop.bannerHonest", "banner: \(s.banner ?? "nil")")
+}
