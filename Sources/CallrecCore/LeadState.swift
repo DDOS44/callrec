@@ -8,6 +8,19 @@ public enum LeadStatus: String, Codable, Sendable, CaseIterable {
     case skipped
 }
 
+extension LeadStatus {
+    /// The status a lead gets when its wrap-up is saved. The person's outcome is the truth:
+    /// the recorder can mark a real conversation "no answer" (the recording never started),
+    /// so a wrap-up outcome must be able to correct it. A blank outcome changes nothing.
+    /// Do-not-call and skipped are never overridden here.
+    public static func afterWrapUp(outcome: String, current: LeadStatus) -> LeadStatus {
+        if current == .doNotCall || current == .skipped { return current }
+        let o = outcome.trimmingCharacters(in: .whitespaces).lowercased()
+        if o.isEmpty { return current }
+        return o == "no connect" ? .noAnswer : .called
+    }
+}
+
 /// What happened to one lead. Everything is optional-or-defaulted so a state file
 /// written by an older build still loads.
 public struct LeadRecord: Codable, Equatable, Sendable {

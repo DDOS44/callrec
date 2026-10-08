@@ -459,7 +459,7 @@ private struct WrapUpSheet: View {
             Text(wrap.connected ? "Call lasted \(wrap.seconds / 60)m \(wrap.seconds % 60)s." : "The call did not connect.")
                 .font(.callout).foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 116), spacing: 8)], alignment: .leading, spacing: 8) {
-                ForEach(Outcome.allCases.filter { $0 != .none && $0 != .test }) { option in
+                ForEach(Outcome.allCases.filter { $0 != .none }) { option in
                     Button { outcome = outcome == option ? .none : option } label: { Text(option.rawValue).frame(maxWidth: .infinity) }
                         .buttonStyle(.bordered)
                         .tint(outcome == option ? option.color : .secondary)

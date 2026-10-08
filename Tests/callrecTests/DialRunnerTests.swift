@@ -282,3 +282,33 @@ private struct Rig {
     let reloaded = try DialLog.load(from: logURL).entries
     expect(reloaded.contains { $0.kind == .result && $0.attemptID == "ORPHAN" }, "recover.resultLogged", "no result written")
 }
+
+@Test func wrapUpOutcomeSetsTheLeadStatus() {
+    // Regression: a real conversation the recorder missed stayed "no answer", so the
+    // list summary showed "Called 0" after a test call.
+    equal(LeadStatus.afterWrapUp(outcome: "booked", current: .noAnswer), .called, "status.bookedIsCalled")
+    equal(LeadStatus.afterWrapUp(outcome: "test", current: .noAnswer), .called, "status.testIsCalled")
+    equal(LeadStatus.afterWrapUp(outcome: "pitched", current: .pending), .called, "status.pendingToCalled")
+    equal(LeadStatus.afterWrapUp(outcome: "no connect", current: .called), .noAnswer, "status.noConnect")
+    equal(LeadStatus.afterWrapUp(outcome: "", current: .called), .called, "status.blankKeeps")
+    equal(LeadStatus.afterWrapUp(outcome: "booked", current: .doNotCall), .doNotCall, "status.dncSticks")
+    equal(LeadStatus.afterWrapUp(outcome: "booked", current: .skipped), .skipped, "status.skippedSticks")
+}
+
+@MainActor @Test func savingAWrapUpMovesTheLeadToCalled() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    // History knows about the dial, but no recording ever started (call not seen as connected).
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    // Appears only after the dial, so the cooldown check at dial time does not skip the lead.
+    rig.box.snapshot = HistorySnapshot(rows: [HistoryCall(key: "9000000001", date: rig.box.now.addingTimeInterval(5), seconds: 40)],
+                                       detection: .unavailable(reason: "fixture"))
+    rig.advance(50); r.tick(); await rig.settle()
+    if case .wrapUp(let w) = r.session.phase { expect(!w.connected, "wrap.notSeenConnected") }
+    else { Issue.record("wrap.phase: \(r.session.phase)"); return }
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .noAnswer, "wrap.beforeSave")
+    r.saveWrapUp(outcome: "booked", notes: "", doNotCall: false)
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .called, "wrap.afterSave")
+    equal(LeadQueue.counts(r.queue)[.called] ?? 0, 1, "wrap.summaryCalledCount")
+}

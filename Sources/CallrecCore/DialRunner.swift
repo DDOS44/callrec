@@ -428,7 +428,10 @@ public final class DialRunner: ObservableObject {
     }
 
     private func wrapUp(_ id: String, outcome: String, notes: String) {
-        update(id) { $0.outcome = outcome; $0.notes = notes }
+        update(id) {
+            $0.outcome = outcome; $0.notes = notes
+            $0.status = LeadStatus.afterWrapUp(outcome: outcome, current: $0.status)
+        }
         if let r = recovering, r.attempt.leadID == id {
             // Close the orphaned attempt so it is never offered again.
             _ = append(r.attempt.finished(at: services.now(), result: r.recordingStart == nil ? .noConnect : .connected,
