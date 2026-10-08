@@ -9,6 +9,11 @@ final class AppModel: ObservableObject {
     @Published var days: [Day] = []
     @Published var selectedDay: String?
     @Published var selectedCall: String?
+    /// Everything highlighted in the call list (Cmd/Shift-click). `selectedCall` is the one the detail column shows.
+    @Published var selectedCalls: Set<String> = []
+    /// Calls waiting for the "Move to Trash" confirmation.
+    @Published var pendingTrash: [String] = []
+    @Published var trashProblem: String?
     @Published var search = ""
     /// Show lines the pipeline flagged (bleed, operator, loop). Display only: never changes the file.
     @Published var showFiltered = false
@@ -74,8 +79,67 @@ final class AppModel: ObservableObject {
             selectedDay = days.first?.name
         }
         if previous == nil || !allCalls.contains(where: { $0.id == previous }) {
-            selectedCall = callsForSelectedDay.first?.id
+            select(visibleCalls.first?.id)
+        } else {
+            selectedCalls = selectedCalls.filter { id in allCalls.contains { $0.id == id } }
         }
+    }
+
+    /// Selects exactly one call (or none).
+    func select(_ id: String?) {
+        selectedCall = id
+        selectedCalls = id.map { [$0] } ?? []
+    }
+
+    /// The list's selection changed. The detail column keeps its call while it is still
+    /// selected; otherwise it shows the first selected call in list order.
+    func setSelection(_ ids: Set<String>) {
+        selectedCalls = ids
+        if let current = selectedCall, ids.contains(current) { return }
+        selectedCall = visibleCalls.first(where: { ids.contains($0.id) })?.id ?? ids.first
+    }
+
+    // MARK: - Delete (to the Trash)
+
+    /// Asks for confirmation. `ids` is what was right-clicked; otherwise the current selection.
+    func requestTrash(_ ids: Set<String>? = nil) {
+        let wanted = ids ?? selectedCalls
+        let calls = allCalls.filter { wanted.contains($0.id) }
+        guard !calls.isEmpty else { return }
+        if let busy = calls.first(where: { $0.id == transcribingID || ($0.rawOnly && recordingSince != nil) }) {
+            // The recorder would write the transcript back after the delete.
+            trashProblem = "\(busy.title) is still being recorded or transcribed. Try again when it has finished."
+            return
+        }
+        pendingTrash = calls.map(\.id)
+    }
+
+    var trashPrompt: String { pendingTrash.count == 1 ? "Move 1 call to the Trash?" : "Move \(pendingTrash.count) calls to the Trash?" }
+    var trashDetail: String {
+        pendingTrash.count == 1
+            ? "Its audio and transcript go to the Trash and can be restored from Finder until you empty it."
+            : "Their audio and transcripts go to the Trash and can be restored from Finder until you empty it."
+    }
+
+    func confirmTrash() {
+        let targets = allCalls.filter { pendingTrash.contains($0.id) }.map { (day: $0.day, base: $0.time.replacingOccurrences(of: ":", with: "-")) }
+        pendingTrash = []
+        guard !targets.isEmpty else { return }
+        let root = Library.root
+        Task.detached(priority: .userInitiated) { [weak self] in
+            var problems: [String] = []
+            for t in targets {
+                let r = CallTrash.trash(base: t.base, in: root.appendingPathComponent(t.day))
+                if !r.isComplete { problems.append("\(t.day)/\(t.base): \(r.report)") }
+            }
+            let report = problems.joined(separator: "\n")
+            await self?.trashed(problem: report.isEmpty ? nil : report)
+        }
+    }
+
+    private func trashed(problem: String?) {
+        trashProblem = problem
+        reload()
     }
 
     private func startWatching() {

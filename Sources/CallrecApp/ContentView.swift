@@ -31,9 +31,29 @@ struct ContentView: View {
                 .disabled(model.current == nil)
                 .help("Reveal the recording in Finder")
             }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    model.requestTrash()
+                } label: {
+                    Label("Move to Trash", systemImage: "trash")
+                }
+                .disabled(model.selectedCalls.isEmpty || model.selectedDay == AppModel.dialerTag)
+                .help("Move the selected calls to the Trash")
+            }
         }
         .navigationTitle("callrec")
         .frame(minWidth: 980, minHeight: 620)
+        .alert(model.trashPrompt, isPresented: Binding(get: { !model.pendingTrash.isEmpty }, set: { if !$0 { model.pendingTrash = [] } })) {
+            Button("Move to Trash", role: .destructive) { model.confirmTrash() }
+            Button("Cancel", role: .cancel) { model.pendingTrash = [] }
+        } message: {
+            Text(model.trashDetail)
+        }
+        .alert("Could not move to the Trash", isPresented: Binding(get: { model.trashProblem != nil }, set: { if !$0 { model.trashProblem = nil } })) {
+            Button("OK") { model.trashProblem = nil }
+        } message: {
+            Text(model.trashProblem ?? "")
+        }
     }
 }
 
@@ -80,10 +100,14 @@ struct CallListColumn: View {
             if model.visibleCalls.isEmpty {
                 emptyState
             } else {
-                List(model.visibleCalls, selection: $model.selectedCall) { call in
+                List(model.visibleCalls, selection: Binding(get: { model.selectedCalls }, set: { model.setSelection($0) })) { call in
                     CallRow(call: call, showDay: model.selectedDay == AppModel.allDaysTag)
                         .tag(call.id)
                 }
+                .contextMenu(forSelectionType: String.self) { ids in
+                    Button("Move to Trash…", systemImage: "trash") { model.requestTrash(ids) }
+                }
+                .onDeleteCommand { model.requestTrash() }
                 // No .alternatingRowBackgrounds(): it keeps painting striped
                 // rows below the last call, which read as empty placeholders.
                 .listStyle(.inset)
