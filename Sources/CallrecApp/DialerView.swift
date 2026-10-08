@@ -9,22 +9,24 @@ struct DialerListColumn: View {
     @State private var picking = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Dialer").font(.title2.weight(.semibold))
-            if let imported = dialer.imported, let runner = dialer.runner {
-                ListSummary(imported: imported, runner: runner, name: dialer.listName)
-            } else {
-                Text("Import a CSV with at least company and phone columns.")
-                    .font(.callout).foregroundStyle(.secondary)
+        // A ScrollView, not a bare VStack with a Spacer: the column can never be asked to lay out
+        // taller than its pane, so an error appearing cannot push content under the toolbar.
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Dialer").font(.title2.weight(.semibold))
+                if let imported = dialer.imported, let runner = dialer.runner {
+                    ListSummary(imported: imported, runner: runner, name: dialer.listName)
+                } else {
+                    Text("Import a CSV with at least company and phone columns.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Button { picking = true } label: { Label("Import list…", systemImage: "square.and.arrow.down") }
+                    .disabled(dialer.sessionRunning)
+                if let e = dialer.error { ImportErrorBanner(message: e) { dialer.error = nil } }
             }
-            Button { picking = true } label: { Label("Import list…", systemImage: "square.and.arrow.down") }
-                .disabled(dialer.sessionRunning)
-            if let e = dialer.error {
-                Text(e).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
         .fileImporter(isPresented: $picking, allowedContentTypes: [.commaSeparatedText, .plainText]) { result in
@@ -36,6 +38,28 @@ struct DialerListColumn: View {
             case .failure(let e): dialer.error = e.localizedDescription
             }
         }
+    }
+}
+
+/// The failed-import message: inline under the button, wraps, can be dismissed.
+private struct ImportErrorBanner: View {
+    let message: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+            Text(message)
+                .font(.callout).foregroundStyle(.red)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: dismiss) { Image(systemName: "xmark") }
+                .buttonStyle(.borderless)
+                .help("Dismiss")
+        }
+        .padding(10)
+        .background(Color.red.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

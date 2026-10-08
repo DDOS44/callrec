@@ -28,6 +28,10 @@ final class DialerModel: ObservableObject {
     private func open(csv source: URL, copy: Bool) {
         guard !sessionRunning else { error = "Stop the session before changing the list."; return }
         do {
+            let config = Config.load()
+            // Parse the chosen file FIRST: a file that fails to import must leave no copy behind,
+            // and the previous list stays loaded because nothing below runs on a throw.
+            let result = try LeadImporter.load(source, caller: config.dialerCaller, repeatable: config.dialRules.testKeys)
             var csv = source
             if copy, source.deletingLastPathComponent().standardizedFileURL != DialerPaths.listsDir.standardizedFileURL {
                 try Paths.ensureDir(DialerPaths.listsDir)
@@ -35,8 +39,6 @@ final class DialerModel: ObservableObject {
                 try FileManager.default.copyItem(at: source, to: csv)
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: csv.path)
             }
-            let config = Config.load()
-            let result = try LeadImporter.load(csv, caller: config.dialerCaller, repeatable: config.dialRules.testKeys)
             let name = csv.deletingPathExtension().lastPathComponent
             // The rejected rows are written next to the list so they can be fixed and never get lost.
             let report = DialerPaths.listsDir.appendingPathComponent("\(name).rejected.txt")
