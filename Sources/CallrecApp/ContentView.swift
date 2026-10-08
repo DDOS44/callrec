@@ -192,42 +192,37 @@ struct CallRow: View {
     let call: Call
     var showDay = false
 
+    private static let stamp: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "d MMM, HH:mm"; return f
+    }()
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
                 Text(call.title)
-                    .font(call.hasIdentity ? .body.weight(.medium)
-                                           : .system(.body, design: .rounded).monospacedDigit().weight(.medium))
+                    .font(call.hasName ? .body.weight(.medium)
+                                       : .system(.body, design: .rounded).monospacedDigit().weight(.medium))
                     .lineLimit(1)
-                if call.hasIdentity {
-                    Text(call.time)
-                        .font(.system(.caption, design: .rounded).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-                Text(call.durationLabel)
-                    .font(.caption)
-                    .monospacedDigit()
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
                 Spacer(minLength: 4)
                 if let outcome = Outcome(rawValue: call.outcome), outcome != .none {
                     OutcomeCapsule(outcome: outcome)
                 }
             }
-            HStack(spacing: 6) {
-                if showDay {
-                    Text(call.day)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                Text(call.audioOnly ? model.pendingStatus(for: call)
-                     : (call.subtitle.isEmpty ? (call.preview.isEmpty ? "No transcript yet" : call.preview) : call.subtitle))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            Text(detail)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .padding(.vertical, 6)
+        // A rehearsal call is visible but clearly not real work.
+        .opacity(call.isTest ? 0.5 : 1)
+    }
+
+    /// date · duration · the first words of the transcript.
+    private var detail: String {
+        let words = call.audioOnly ? model.pendingStatus(for: call)
+            : (call.preview.isEmpty ? (call.subtitle.isEmpty ? "No transcript yet" : call.subtitle) : call.preview)
+        return [Self.stamp.string(from: call.date), call.durationLabel, words].joined(separator: " · ")
     }
 }
 

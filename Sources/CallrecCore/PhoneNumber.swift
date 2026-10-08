@@ -31,6 +31,13 @@ public enum PhoneNumber {
         return d.count >= 10 ? String(d.suffix(10)) : nil
     }
 
+    /// How a number reads on screen: "+91 82199 71169" for any Indian number `normalize`
+    /// accepts. Anything else is shown as it came, trimmed, never guessed at.
+    public static func display(_ raw: String) -> String {
+        guard let n = normalize(raw) else { return raw.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return "+91 \(n.prefix(5)) \(n.suffix(5))"
+    }
+
     private static func digits(_ raw: String) -> String {
         String(String.UnicodeScalarView(raw.unicodeScalars.filter { $0.value >= 48 && $0.value <= 57 }))
     }

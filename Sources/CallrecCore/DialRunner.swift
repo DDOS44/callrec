@@ -64,6 +64,8 @@ public final class DialRunner: ObservableObject {
     @Published public private(set) var dnc = DNCList()
     @Published public private(set) var dialLog: [DialLogEntry] = []
     @Published public private(set) var preflightChecked = false
+    /// Where the last wrap-up went, for the confirmation line. Cleared by `dismissSaveNote`.
+    @Published public private(set) var saveNote: String?
 
     public let services: Services
     private let rules: DialRules
@@ -121,6 +123,20 @@ public final class DialRunner: ObservableObject {
         return dialLog.filter { $0.kind == .attempt && services.calendar.isDate($0.ts, inSameDayAs: now) }.count
     }
 
+    /// Dials that count against the real caps (test-number dials do not).
+    public var realDialsToday: Int {
+        let now = services.now()
+        return dialLog.filter { $0.kind == .attempt && !rules.testKeys.contains($0.key) && services.calendar.isDate($0.ts, inSameDayAs: now) }.count
+    }
+
+    public var realDialsLastHour: Int {
+        let now = services.now()
+        return dialLog.filter { $0.kind == .attempt && !rules.testKeys.contains($0.key) && $0.ts > now.addingTimeInterval(-3600) && $0.ts <= now }.count
+    }
+
+    /// True for one of the user's own configured test numbers.
+    public func isTestLead(_ lead: Lead) -> Bool { rules.testKeys.contains(lead.number) }
+
     public var dialsLastHour: Int {
         let now = services.now()
         return dialLog.filter { $0.kind == .attempt && $0.ts > now.addingTimeInterval(-3600) && $0.ts <= now }.count
@@ -141,6 +157,7 @@ public final class DialRunner: ObservableObject {
     }
 
     public func dismissAlerts() { alerts.removeAll() }
+    public func dismissSaveNote() { saveNote = nil }
 
     // MARK: - Pre-flight
 
@@ -439,14 +456,22 @@ public final class DialRunner: ObservableObject {
             recovering = nil
             refreshUnfinished()
         }
-        guard let lead = services.leads.leads.first(where: { $0.id == id }), let start = callStart else { return }
+        guard let lead = services.leads.leads.first(where: { $0.id == id }), let start = callStart else {
+            saveNote = "Saved to the lead's record. There is no recording to attach it to."
+            return
+        }
         let item = PendingMarkdown(callStart: start, lead: lead, outcome: outcome, notes: notes)
         write(item)
     }
 
     private func write(_ item: PendingMarkdown) {
         do {
-            if try !services.applyToMarkdown(item.callStart, item.lead, item.outcome, item.notes) { pendingMarkdown.append(item) }
+            if try services.applyToMarkdown(item.callStart, item.lead, item.outcome, item.notes) {
+                saveNote = "Saved to the call's transcript"
+            } else {
+                pendingMarkdown.append(item)
+                saveNote = "Saved. It will be added to the transcript when the transcript is ready."
+            }
         } catch {
             alert("Could not save the notes into the call's file: \(error.localizedDescription). They are kept in the lead's state.")
         }

@@ -221,6 +221,21 @@ public enum DialPolicy {
             + calendar.component(.second, from: date)
     }
 
+    /// Where the calling window stands, for the session header.
+    public enum HoursStatus: Equatable, Sendable {
+        /// Open; `endSeconds` is the closing time as seconds after midnight.
+        case open(endSeconds: Int)
+        /// Closed; `opensAt` is the next opening (nil when no calling day is enabled).
+        case closed(opensAt: Date?)
+    }
+
+    public static func hoursStatus(now: Date, rules: DialRules, calendar: Calendar) -> HoursStatus {
+        if case .outsideCallingHours(let opens)? = hoursBlock(now: now, rules: rules, calendar: calendar) {
+            return .closed(opensAt: opens)
+        }
+        return .open(endSeconds: rules.hoursEnd)
+    }
+
     static func hoursBlock(now: Date, rules: DialRules, calendar: Calendar) -> DialBlock? {
         let sec = secondsOfDay(now, calendar)
         if rules.days.contains(isoWeekday(now, calendar)), sec >= rules.hoursStart, sec < rules.hoursEnd { return nil }

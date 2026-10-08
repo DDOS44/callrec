@@ -61,3 +61,20 @@ private func testRules(_ keys: Set<String> = ["9000000077"]) -> DialRules {
     #expect(r.leads.map(\.id) == ["9000000077", "9000000077#2", "9000000001"])
     #expect(r.rejected.count == 1, "a repeated real number is still rejected")
 }
+
+@Test func numbersAreShownInTheIndianGrouping() {
+    equal(PhoneNumber.display("+918219971169"), "+91 82199 71169", "disp.e164")
+    equal(PhoneNumber.display("08219971169"), "+91 82199 71169", "disp.trunk")
+    equal(PhoneNumber.display("9000000001"), "+91 90000 00001", "disp.plain")
+    equal(PhoneNumber.display(" +44 20 7946 0958 "), "+44 20 7946 0958", "disp.foreignUntouched")
+    equal(PhoneNumber.display(""), "", "disp.empty")
+}
+
+@Test func hoursStatusSaysOpenUntilOrWhenItOpens() {
+    let r = DialRules()
+    let noon = DialFixture.at(7, 12)
+    equal(DialPolicy.hoursStatus(now: noon, rules: r, calendar: DialFixture.cal), .open(endSeconds: 18 * 3600 + 1800), "hours.open")
+    if case .closed(let opens) = DialPolicy.hoursStatus(now: DialFixture.at(7, 1), rules: r, calendar: DialFixture.cal) {
+        expect(opens != nil, "hours.closedHasOpening")
+    } else { Issue.record("hours.closedAtNight") }
+}

@@ -9,7 +9,7 @@ struct DialerListColumn: View {
     @State private var picking = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             Text("Dialer").font(.title2.weight(.semibold))
             if let imported = dialer.imported, let runner = dialer.runner {
                 ListSummary(imported: imported, runner: runner, name: dialer.listName)
@@ -48,14 +48,14 @@ private struct ListSummary: View {
         let counts = LeadQueue.counts(runner.queue)
         VStack(alignment: .leading, spacing: 8) {
             Text(name).font(.headline).lineLimit(2)
-            row("Pending", counts[.pending] ?? 0)
-            row("Called", counts[.called] ?? 0)
-            row("No answer", counts[.noAnswer] ?? 0)
-            row("Do not call", counts[.doNotCall] ?? 0)
-            row("Skipped", counts[.skipped] ?? 0)
+            row("Pending", "circle", .secondary, counts[.pending] ?? 0)
+            row("Called", "checkmark.circle.fill", .green, counts[.called] ?? 0)
+            row("No answer", "phone.down.fill", .secondary, counts[.noAnswer] ?? 0)
+            row("Do not call", "nosign", .red, counts[.doNotCall] ?? 0)
+            row("Skipped", "forward.fill", .orange, counts[.skipped] ?? 0)
             Divider()
-            row("Dials today", runner.dialsToday)
-            if imported.filteredOut > 0 { row("Other callers", imported.filteredOut) }
+            row("Dials today", "phone.arrow.up.right", .secondary, runner.dialsToday)
+            if imported.filteredOut > 0 { row("Other callers", "person.2", .secondary, imported.filteredOut) }
             if !imported.rejected.isEmpty {
                 DisclosureGroup("\(imported.rejected.count) rows rejected") {
                     ScrollView {
@@ -71,8 +71,14 @@ private struct ListSummary: View {
         }
     }
 
-    private func row(_ label: String, _ n: Int) -> some View {
-        HStack { Text(label).foregroundStyle(.secondary); Spacer(); Text("\(n)").monospacedDigit() }.font(.callout)
+    private func row(_ label: String, _ symbol: String, _ color: Color, _ n: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol).foregroundStyle(color).frame(width: 18)
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text("\(n)").monospacedDigit()
+        }
+        .font(.callout)
     }
 }
 
@@ -100,19 +106,23 @@ private struct DialerSession: View {
     private var phase: DialSession.Phase { runner.session.phase }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                banners
-                stateCard
-                controls
-                if let item = runner.current ?? runner.nextUp {
-                    LeadCard(item: item, heading: runner.current == nil ? "Next up" : "Calling",
-                             calledBefore: runner.snapshot?.lastCallByKey[item.lead.number])
+        VStack(spacing: 0) {
+            SessionHeader(runner: runner)
+            Divider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    banners
+                    recovery
+                    phaseCard
+                    if let item = runner.current ?? runner.nextUp {
+                        LeadHero(item: item, isCalling: runner.current != nil, isTest: runner.isTestLead(item.lead),
+                                 calledBefore: runner.snapshot?.lastCallByKey[item.lead.number])
+                    }
+                    QueueSection(runner: runner)
                 }
-                queue
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .sheet(isPresented: Binding(get: { phase == .preflight }, set: { _ in })) {
             PreflightSheet(runner: runner)
@@ -127,13 +137,27 @@ private struct DialerSession: View {
     // MARK: Banners
 
     @ViewBuilder private var banners: some View {
-        if let text = runner.session.banner {
+        if let note = runner.saveNote {
+            Label(note, systemImage: "checkmark.circle.fill")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.green)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                .task(id: note) {
+                    do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+                    runner.dismissSaveNote()
+                }
+        }
+        // A pause or stop that waits for the call to finish. Paused and stopped states carry
+        // their reason in the header capsule.
+        if runner.session.pendingHalt != nil, let text = runner.session.banner {
             Label(text, systemImage: runner.session.isRedBanner ? "exclamationmark.octagon.fill" : "pause.circle.fill")
                 .font(.callout.weight(.medium))
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .foregroundStyle(.white)
-                .background(runner.session.isRedBanner ? Color.red : Color.orange, in: RoundedRectangle(cornerRadius: 8))
+                .background(runner.session.isRedBanner ? Color.red : Color.orange, in: RoundedRectangle(cornerRadius: 10))
         }
         ForEach(Array(runner.alerts.enumerated()), id: \.offset) { _, alert in
             Label(alert, systemImage: "exclamationmark.triangle.fill")
@@ -142,232 +166,36 @@ private struct DialerSession: View {
         if !runner.alerts.isEmpty { Button("Dismiss") { runner.dismissAlerts() }.controlSize(.small) }
     }
 
-    // MARK: State
-
-    @ViewBuilder private var stateCard: some View {
-        switch phase {
-        case .idle, .stopped:
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(runner.unfinished) { item in
-                    let title = runner.queue.first { $0.id == item.attempt.leadID }?.lead.title ?? item.attempt.leadID
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(title) has no wrap-up").font(.headline)
-                            Text("Dialled \(item.attempt.ts.formatted(date: .omitted, time: .shortened)); the session was interrupted"
-                                 + (item.recordingStart == nil ? "." : ". Notes will go into that call's transcript."))
-                                .font(.callout).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Finish wrap-up") { runner.recover(item) }.buttonStyle(.borderedProminent)
-                    }
-                    .padding(12)
-                    .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-                }
-                Text("Not running. \(runner.dialsToday) dials today.").foregroundStyle(.secondary)
-            }
-        case .preflight:
-            Text("Pre-flight checklist…").foregroundStyle(.secondary)
-        case .dialing, .waitingForCall, .resolvingDial:
-            HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
-                Text("Click Call in the macOS prompt. Check it shows your cold SIM first.")
-            }
-        case .onCall(_, let startedAt):
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Circle().fill(.red).frame(width: 9, height: 9)
-                    Text("On the call").font(.headline)
-                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                        Text(clock(ctx.date.timeIntervalSince(startedAt))).monospacedDigit().foregroundStyle(.secondary)
-                    }
-                }
-                HStack {
-                    Button(role: .destructive) { runner.doNotCallAgain() } label: { Label("Do not call again", systemImage: "nosign") }
-                    Button { runner.pauseAfterThisCall() } label: { Label("Pause after this call", systemImage: "pause") }
-                }
-            }
-        case .wrapUp:
-            Text("Wrap up the call to continue.").foregroundStyle(.secondary)
-        case .countdown(let c):
-            CountdownView(countdown: c, runner: runner)
-        case .paused:
-            Text("Paused. Nothing will dial until you resume.").foregroundStyle(.secondary)
-        }
+    @ViewBuilder private var recovery: some View {
+        if case .idle = phase { recoveryCards } else if case .stopped = phase { recoveryCards }
     }
 
-    private func clock(_ s: TimeInterval) -> String {
-        let n = max(Int(s), 0)
-        return String(format: "%d:%02d", n / 60, n % 60)
-    }
-
-    // MARK: Controls
-
-    private var controls: some View {
-        HStack(spacing: 10) {
-            switch phase {
-            case .idle, .stopped:
-                Button { runner.start() } label: { Label("Start session", systemImage: "play.fill") }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(runner.nextUp == nil)
-            case .paused:
-                Button { runner.resume() } label: { Label("Resume", systemImage: "play.fill") }.buttonStyle(.borderedProminent)
-                Button(role: .destructive) { runner.stop() } label: { Label("Stop", systemImage: "stop.fill") }
-            case .preflight:
-                EmptyView()
-            default:
-                Button { runner.pause() } label: { Label("Pause", systemImage: "pause.fill") }
-                if case .countdown = phase {
-                    Button { runner.skipNext() } label: { Label("Skip", systemImage: "forward.fill") }
-                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                        Button { runner.dialNow() } label: { Label("Dial now", systemImage: "phone.fill") }
-                            .disabled(!runner.session.canDialNow(at: ctx.date))
-                    }
+    private var recoveryCards: some View {
+        ForEach(runner.unfinished) { item in
+            let title = runner.queue.first { $0.id == item.attempt.leadID }?.lead.title ?? item.attempt.leadID
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(title) has no wrap-up").font(.headline)
+                    Text("Dialled \(item.attempt.ts.formatted(date: .omitted, time: .shortened)); the session was interrupted"
+                         + (item.recordingStart == nil ? "." : ". Notes will go into that call's transcript."))
+                        .font(.callout).foregroundStyle(.secondary)
                 }
-                Button(role: .destructive) { runner.stop() } label: { Label("Stop", systemImage: "stop.fill") }
-            }
-        }
-    }
-
-    // MARK: Queue
-
-    private var queue: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Queue").font(.headline)
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(runner.queue) { item in
-                    QueueRow(item: item, isCurrent: item.id == runner.current?.id)
-                    Divider()
-                }
-            }
-        }
-    }
-}
-
-private struct CountdownView: View {
-    let countdown: DialSession.Countdown
-    @ObservedObject var runner: DialRunner
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { ctx in
-            let left = max(Int(countdown.until.timeIntervalSince(ctx.date).rounded(.up)), 0)
-            VStack(alignment: .leading, spacing: 6) {
-                if let blocked = countdown.blocked {
-                    Label(blocked.message, systemImage: "hourglass").font(.callout).foregroundStyle(.orange)
-                } else if left > 0 {
-                    HStack(spacing: 8) {
-                        Text("Next dial in").foregroundStyle(.secondary)
-                        Text("\(left)s").font(.title2.weight(.semibold)).monospacedDigit()
-                    }
-                } else {
-                    Text("Dialing…").foregroundStyle(.secondary)
-                }
-                Text("A random gap between calls keeps the pace human.").font(.caption).foregroundStyle(.tertiary)
-            }
-        }
-    }
-}
-
-// MARK: - Cards
-
-private struct LeadCard: View {
-    let item: QueueItem
-    let heading: String
-    /// Last time this number appears in call history (either direction), if ever.
-    var calledBefore: Date?
-
-    var body: some View {
-        let lead = item.lead
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(heading.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
-                ConfidenceBadge(confidence: lead.confidence)
+                Button("Finish wrap-up") { runner.recover(item) }.buttonStyle(.borderedProminent)
             }
-            Text(lead.title).font(.title.weight(.semibold)).tracking(-0.3)
-            Text([lead.city, lead.owner.isEmpty ? nil : "Owner: \(lead.owner)"].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                .font(.subheadline).foregroundStyle(.secondary)
-            if !lead.whatTheyDo.isEmpty { field("What they do", lead.whatTheyDo) }
-            if !lead.angle.isEmpty { field("Angle", lead.angle) }
-            if let when = calledBefore {
-                // iPhone dials a number on the line last used with it, overriding the
-                // Default Voice Line. A prospect once called from the main SIM would go
-                // out on the main SIM again.
-                Label("Called before on \(when.formatted(date: .abbreviated, time: .shortened)). Your iPhone may use the SIM from that call. Check the prompt.",
-                      systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func field(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.body).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-private struct ConfidenceBadge: View {
-    let confidence: LeadConfidence
-
-    var body: some View {
-        Text(confidence.label)
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 8).padding(.vertical, 2)
-            .background(color.opacity(0.18), in: Capsule())
-            .foregroundStyle(color)
-    }
-
-    private var color: Color {
-        switch confidence {
-        case .high: return .green
-        case .medium: return .orange
-        case .low: return .gray
-        case .unknown: return .secondary
-        }
-    }
-}
-
-private struct QueueRow: View {
-    let item: QueueItem
-    let isCurrent: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ConfidenceBadge(confidence: item.lead.confidence)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.lead.title).font(.body.weight(isCurrent ? .semibold : .regular)).lineLimit(1)
-                Text([item.lead.city, item.lead.owner].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer()
-            Text(label).font(.caption).foregroundStyle(color)
-        }
-        .padding(.vertical, 6)
-    }
-
-    private var label: String {
-        switch item.status {
-        case .pending: return "pending"
-        case .called: return item.record.outcome.isEmpty ? "called" : item.record.outcome
-        case .noAnswer: return "no answer"
-        case .doNotCall: return "do not call"
-        case .skipped: return "skipped"
+            .padding(16)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
         }
     }
 
-    private var color: Color {
-        switch item.status {
-        case .pending: return .secondary
-        case .called: return .blue
-        case .noAnswer: return .gray
-        case .doNotCall: return .red
-        case .skipped: return .orange
+    // MARK: Phase card
+
+    @ViewBuilder private var phaseCard: some View {
+        switch phase {
+        case .countdown(let c): CountdownCard(countdown: c, runner: runner)
+        case .onCall(_, let startedAt): OnCallCard(startedAt: startedAt, runner: runner)
+        default: EmptyView()
         }
     }
 }
@@ -437,49 +265,5 @@ private struct PreflightSheet: View {
         case .fail: return .red
         case .manual: return .orange
         }
-    }
-}
-
-private struct WrapUpSheet: View {
-    @ObservedObject var runner: DialRunner
-    let item: QueueItem
-    let wrap: DialSession.WrapUp
-    @State private var outcome: Outcome
-    @State private var notes = ""
-    @State private var doNotCall = false
-
-    init(runner: DialRunner, item: QueueItem, wrap: DialSession.WrapUp) {
-        self.runner = runner; self.item = item; self.wrap = wrap
-        _outcome = State(initialValue: wrap.connected ? .none : .noConnect)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Wrap up: \(item.lead.title)").font(.title2.weight(.semibold))
-            Text(wrap.connected ? "Call lasted \(wrap.seconds / 60)m \(wrap.seconds % 60)s." : "The call did not connect.")
-                .font(.callout).foregroundStyle(.secondary)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 116), spacing: 8)], alignment: .leading, spacing: 8) {
-                ForEach(Outcome.allCases.filter { $0 != .none }) { option in
-                    Button { outcome = outcome == option ? .none : option } label: { Text(option.rawValue).frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered)
-                        .tint(outcome == option ? option.color : .secondary)
-                        .background { if outcome == option { RoundedRectangle(cornerRadius: 6).fill(option.color.opacity(0.22)) } }
-                }
-            }
-            TextEditor(text: $notes)
-                .font(.body)
-                .frame(minHeight: 90)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-            Toggle("Do not call again", isOn: $doNotCall)
-            HStack {
-                Spacer()
-                Button("Save") { runner.saveWrapUp(outcome: outcome.rawValue, notes: notes, doNotCall: doNotCall) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(22)
-        .frame(width: 520)
-        .interactiveDismissDisabled()
     }
 }

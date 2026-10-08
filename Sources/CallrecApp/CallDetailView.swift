@@ -1,3 +1,4 @@
+import AppKit
 import CallrecCore
 import SwiftUI
 
@@ -79,7 +80,7 @@ struct CallDetailView: View {
     private var subtitleLine: String {
         var bits = [call.hasIdentity ? "\(dayLabel), \(call.time)" : dayLabel, call.durationLabel]
         if !call.identity.owner.isEmpty { bits.append(call.identity.owner) }
-        if !call.identity.number.isEmpty, call.identity.number != call.title { bits.append(call.identity.number) }
+        if call.hasName, !call.identity.number.isEmpty { bits.append(PhoneNumber.display(call.identity.number)) }
         return bits.joined(separator: " · ")
     }
 
@@ -205,6 +206,14 @@ struct CallDetailView: View {
                 .padding(10)
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
                 .onChange(of: notes) { scheduleSave() }
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text").foregroundStyle(.secondary)
+                Text("Saved in \(call.day)/\(call.markdown.lastPathComponent)")
+                    .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Text("·").font(.caption).foregroundStyle(.tertiary)
+                Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([call.markdown]) }
+                    .buttonStyle(.link).font(.caption)
+            }
         }
     }
 

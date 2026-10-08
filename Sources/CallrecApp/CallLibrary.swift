@@ -24,21 +24,23 @@ struct Call: Identifiable, Hashable {
     /// Raw capture only: being recorded right now, or an interrupted recording.
     var rawOnly = false
 
-    /// What the row leads with: the company, else the contact, else the number,
+    /// What the row leads with: the company, else the contact, else the formatted number,
     /// else just the time.
     var title: String {
-        for candidate in [identity.company, identity.contact, identity.number] where !candidate.isEmpty {
-            return candidate
-        }
+        for candidate in [identity.company, identity.contact] where !candidate.isEmpty { return candidate }
+        if !identity.number.isEmpty { return PhoneNumber.display(identity.number) }
         return time
     }
 
     var hasIdentity: Bool { !identity.isEmpty }
 
+    /// True when the title is a company or contact name (so the number is worth showing too).
+    var hasName: Bool { !identity.company.isEmpty || !identity.contact.isEmpty }
+
     var subtitle: String {
         var bits: [String] = []
         if !identity.owner.isEmpty { bits.append(identity.owner) }
-        if !identity.number.isEmpty, identity.number != title { bits.append(identity.number) }
+        if hasName, !identity.number.isEmpty { bits.append(PhoneNumber.display(identity.number)) }
         return bits.joined(separator: " · ")
     }
 

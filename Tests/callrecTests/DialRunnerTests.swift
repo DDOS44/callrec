@@ -83,8 +83,10 @@ private struct Rig {
     // Save: the .md does not exist yet, so the write waits and retries.
     r.saveWrapUp(outcome: "pitched", notes: "call back", doNotCall: false)
     equal(r.pendingMarkdownCount, 1, "run.mdPending")
+    expect(r.saveNote?.contains("when the transcript is ready") == true, "run.saveNotePending", r.saveNote ?? "nil")
     rig.box.mdReady = true; r.tick()
     equal(r.pendingMarkdownCount, 0, "run.mdWritten")
+    equal(r.saveNote ?? "", "Saved to the call's transcript", "run.saveNoteWritten")
     equal(rig.box.mdWrites.first?.0 ?? "", "pitched", "run.mdOutcome")
     equal(r.queue.first { $0.id == "9000000001" }?.record.outcome ?? "", "pitched", "run.leadState")
 
