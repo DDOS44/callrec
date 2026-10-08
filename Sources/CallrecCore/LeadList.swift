@@ -85,12 +85,14 @@ public struct LeadImport: Equatable, Sendable {
 
 public enum LeadImportError: Error, LocalizedError, Equatable {
     case empty
-    case missingColumns([String])
+    case missingColumns(missing: [String], found: [String])
 
     public var errorDescription: String? {
         switch self {
         case .empty: return "The file has no rows."
-        case .missingColumns(let c): return "The file needs these columns and does not have them: \(c.joined(separator: ", ")). Nothing was imported."
+        case .missingColumns(let missing, let found):
+            let seen = found.isEmpty ? "none" : found.joined(separator: ", ")
+            return "The file needs these columns and does not have them: \(missing.joined(separator: ", ")). Columns found: \(seen). Nothing was imported."
         }
     }
 }
@@ -102,15 +104,15 @@ public enum LeadImporter {
 
         var names: [String] {
             switch self {
-            case .company: return ["company", "companyname", "business", "businessname", "agency", "agencyname", "organisation", "organization"]
-            case .phone: return ["phone", "phonenumber", "mobile", "mobilenumber", "number", "contactnumber", "tel", "telephone", "primaryphone"]
+            case .company: return ["company", "callname", "companyname", "name", "firm", "business", "businessname", "agency", "agencyname", "organisation", "organization", "legalname"]
+            case .phone: return ["phone", "phonenumber", "mobile", "mobilenumber", "number", "contactnumber", "contact", "tel", "telephone", "primaryphone"]
             case .city: return ["city", "location", "town"]
             case .owner: return ["owner", "ownername", "founder", "decisionmaker", "contactperson", "contactname"]
-            case .whatTheyDo: return ["whattheydo", "whatwedo", "description", "about", "niche", "business type", "businesstype", "specialty", "speciality"]
-            case .angle: return ["angle", "pitchangle", "hook", "opener", "scriptangle"]
+            case .whatTheyDo: return ["whattheydo", "whatwedo", "description", "services", "about", "niche", "business type", "businesstype", "specialty", "speciality"]
+            case .angle: return ["angle", "callangle", "pitch", "talkingpoint", "pitchangle", "hook", "opener", "scriptangle"]
             case .confidence: return ["confidence", "priority", "fit", "tier"]
-            case .altNumber: return ["altnumber", "altphone", "alternatenumber", "alternatephone", "secondaryphone", "phone2", "alt"]
-            case .caller: return ["caller", "assignedto", "assignee", "dialer"]
+            case .altNumber: return ["altnumber", "altphone", "alternatenumber", "alternatephone", "secondaryphone", "phone2", "alternate", "alt"]
+            case .caller: return ["caller", "assignedto", "assignee", "ownerrep", "dialer"]
             }
         }
     }
@@ -139,13 +141,15 @@ public enum LeadImporter {
         var index: [Field: Int] = [:]
         let canon = header.map(canonical)
         for field in Field.allCases {
-            let wanted = Set(field.names.map(canonical))
-            if let i = canon.firstIndex(where: { wanted.contains($0) }) { index[field] = i }
+            // Alias order is priority order: the first alias that has a column wins.
+            for name in field.names {
+                if let i = canon.firstIndex(of: canonical(name)) { index[field] = i; break }
+            }
         }
         var missing: [String] = []
         if index[.company] == nil { missing.append("company") }
         if index[.phone] == nil { missing.append("phone") }
-        guard missing.isEmpty else { throw LeadImportError.missingColumns(missing) }
+        guard missing.isEmpty else { throw LeadImportError.missingColumns(missing: missing, found: header.filter { !$0.isEmpty }) }
 
         func cell(_ row: [String], _ f: Field) -> String {
             guard let i = index[f], i < row.count else { return "" }

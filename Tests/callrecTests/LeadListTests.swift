@@ -62,8 +62,8 @@ private func csv(_ rows: [String], header h: String = header) -> String { ([h] +
 }
 
 @Test func missingRequiredColumnsFailLoudlyAndImportNothing() {
-    #expect(throws: LeadImportError.missingColumns(["phone"])) { try LeadImporter.parse("company,city\nFake,Delhi\n") }
-    #expect(throws: LeadImportError.missingColumns(["company", "phone"])) { try LeadImporter.parse("a,b\n1,2\n") }
+    #expect(throws: LeadImportError.missingColumns(missing: ["phone"], found: ["company", "city"])) { try LeadImporter.parse("company,city\nFake,Delhi\n") }
+    #expect(throws: LeadImportError.missingColumns(missing: ["company", "phone"], found: ["a", "b"])) { try LeadImporter.parse("a,b\n1,2\n") }
     #expect(throws: LeadImportError.empty) { try LeadImporter.parse("") }
 }
 
@@ -216,4 +216,36 @@ private func stateURL() -> URL {
     try store.resetSkipped()
     equal(store.record("9000000001").status, .pending, "reset.skippedBack")
     equal(store.record("9000000002").status, .doNotCall, "reset.dncStays")
+}
+
+@Test func importAcceptsTheCallListHeaderAliases() throws {
+    let h = "no,assigned_to,call_name,owner,phone,alt_phone,city,what_they_do,services,focus,serves,call_angle,size_hint,rating,reviews,confidence,why_confidence,website,email,address,legal_name,source,dialled_on,outcome,next_action"
+    let row1 = "1,Alex,Fake Call Name,Asha Test,+91 90000 00101,90000 00102,Delhi,Does IT hiring,Other services,,,Ask about volume,,,,high,,,,,Fake Legal Pvt Ltd,,,,"
+    let row2 = "2,Sam,Second Fake,,9000000103,,Noida,,,,,,,,,low,,,,,Second Legal,,,,"
+    let r = try LeadImporter.parse([h, row1, row2].joined(separator: "\n") + "\n", caller: "alex")
+    equal(r.leads.count, 1, "alias.count")
+    equal(r.filteredOut, 1, "alias.filtered")
+    let l = try #require(r.leads.first)
+    equal(l.company, "Fake Call Name", "alias.callName beats legal_name")
+    equal(l.number, "9000000101", "alias.phone")
+    equal(l.altNumber, "9000000102", "alias.alt_phone")
+    equal(l.owner, "Asha Test", "alias.owner")
+    equal(l.angle, "Ask about volume", "alias.call_angle")
+    equal(l.whatTheyDo, "Does IT hiring", "alias.what_they_do beats services")
+    equal(l.caller, "Alex", "alias.assigned_to")
+}
+
+@Test func legalNameIsTheLastResortCompany() throws {
+    let r = try LeadImporter.parse("Legal Name,Mobile\nFake Legal Co,9000000104\n")
+    equal(r.leads.first?.company, "Fake Legal Co", "alias.legal fallback")
+}
+
+@Test func missingColumnsErrorNamesTheColumnsItFound() {
+    do {
+        _ = try LeadImporter.parse("foo,Bar Baz\n1,2\n")
+        Issue.record("expected throw")
+    } catch {
+        let m = error.localizedDescription
+        expect(m.contains("company") && m.contains("foo") && m.contains("Bar Baz"), "error.names found columns", m)
+    }
 }
