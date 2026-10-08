@@ -244,6 +244,17 @@ struct LeadHero: View {
                 Button { copy(lead.number) } label: { Image(systemName: copied ? "checkmark" : "doc.on.doc") }
                     .buttonStyle(.borderless).help("Copy the number")
             }
+            if !lead.altNumbers.isEmpty {
+                // Shown and copyable, never auto-dialled: only the main number goes through the guardrails.
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("Also").font(.caption).foregroundStyle(.secondary)
+                    ForEach(lead.altNumbers, id: \.self) { alt in
+                        Text(PhoneNumber.display(alt)).font(.callout.monospacedDigit()).textSelection(.enabled)
+                        Button { copy(alt) } label: { Image(systemName: "doc.on.doc").font(.caption) }
+                            .buttonStyle(.borderless).help("Copy this number")
+                    }
+                }
+            }
             if !lead.whatTheyDo.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("What they do").font(.caption).foregroundStyle(.secondary)

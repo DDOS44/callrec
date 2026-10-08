@@ -39,6 +39,8 @@ public struct Lead: Identifiable, Equatable, Sendable {
     public var angle: String
     public var confidence: LeadConfidence
     public var altNumber: String?
+    /// Every valid alternative number from the row (a sheet cell can hold several).
+    public var altNumbers: [String] = []
     public var caller: String
     /// 1-based position among the file's data rows (header excluded), for display and stable ordering.
     public var order: Int
@@ -160,6 +162,10 @@ public enum LeadImporter {
         var out = LeadImport(leads: [], rejected: [], filteredOut: 0, warnings: [], blankRows: 0)
         var seen: [String: Int] = [:]
         var occurrences: [String: Int] = [:]
+        // One summary instead of a warning per row: sheets often truncate the last of
+        // several alt numbers ("… / +91 99"); the valid ones are still kept.
+        var altFragments = 0
+        var altUnreadable: [Int] = []
         var order = 0
 
         for (offset, row) in rows.dropFirst().enumerated() {
@@ -186,19 +192,25 @@ public enum LeadImporter {
             occurrences[number, default: 0] += 1
             order += 1
 
-            let altRaw = cell(row, .altNumber)
-            var alt: String?
-            if !altRaw.isEmpty {
-                alt = PhoneNumber.normalize(altRaw)
-                if alt == nil { out.warnings.append("line \(line): alt number is not a valid 10-digit number, ignored") }
-                if alt == number { alt = nil }
+            let altParsed = PhoneNumber.list(cell(row, .altNumber))
+            let alts = altParsed.valid.filter { $0 != number }
+            let alt = alts.first
+            if !altParsed.dropped.isEmpty {
+                if altParsed.valid.isEmpty { altUnreadable.append(line) } else { altFragments += altParsed.dropped.count }
             }
             var lead = Lead(number: number, company: company, city: cell(row, .city), owner: cell(row, .owner),
                             whatTheyDo: cell(row, .whatTheyDo), angle: cell(row, .angle),
                             confidence: LeadConfidence(text: cell(row, .confidence)), altNumber: alt,
                             caller: cell(row, .caller), order: order)
             lead.repeatIndex = occurrences[number] ?? 1
+            lead.altNumbers = alts
             out.leads.append(lead)
+        }
+        if altFragments > 0 {
+            out.warnings.append("\(altFragments) cut-off alt number fragment(s) skipped; every complete alt number was kept.")
+        }
+        if !altUnreadable.isEmpty {
+            out.warnings.append("Alt number unreadable on line(s) \(altUnreadable.map(String.init).joined(separator: ", ")).")
         }
         return out
     }
