@@ -405,3 +405,8 @@ private struct Rig {
     r.moveBackToQueue(done.id)
     equal(r.queue.first { $0.id == done.id }?.status, .pending, "row.calledMovedBack")
 }
+
+@Test func dialsTodayTextShowsTestDialsSeparately() {
+    equal(DialRunner.dialsTodayText(total: 10, test: 10), "10 (10 test)", "meter.testDials")
+    equal(DialRunner.dialsTodayText(total: 4, test: 0), "4", "meter.noTestDials")
+}

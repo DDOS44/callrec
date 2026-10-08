@@ -135,6 +135,14 @@ public final class DialRunner: ObservableObject {
         return dialLog.filter { $0.kind == .attempt && !rules.testKeys.contains($0.key) && services.calendar.isDate($0.ts, inSameDayAs: now) }.count
     }
 
+    /// Today's dials to the user's own test numbers (they never count against the caps).
+    public var testDialsToday: Int { dialsToday - realDialsToday }
+
+    /// "10" or, when test dials exist, "10 (10 test)": the total is every dial, the caps count only real ones.
+    nonisolated public static func dialsTodayText(total: Int, test: Int) -> String {
+        test > 0 ? "\(total) (\(test) test)" : "\(total)"
+    }
+
     public var realDialsLastHour: Int {
         let now = services.now()
         return dialLog.filter { $0.kind == .attempt && !rules.testKeys.contains($0.key) && $0.ts > now.addingTimeInterval(-3600) && $0.ts <= now }.count

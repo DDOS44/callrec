@@ -150,8 +150,8 @@ private struct GuardrailMeters: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { ctx in
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
-                Meter(title: "Today", value: runner.realDialsToday, limit: runner.rulesInForce.dailyCap)
-                Meter(title: "This hour", value: runner.realDialsLastHour, limit: runner.rulesInForce.hourlyCap)
+                Meter(title: "Today (real dials)", value: runner.realDialsToday, limit: runner.rulesInForce.dailyCap)
+                Meter(title: "This hour (real dials)", value: runner.realDialsLastHour, limit: runner.rulesInForce.hourlyCap)
                 HoursChip(status: DialPolicy.hoursStatus(now: ctx.date, rules: runner.rulesInForce, calendar: .current))
             }
         }

@@ -72,14 +72,15 @@ private struct ListSummary: View {
         let counts = LeadQueue.counts(runner.queue)
         VStack(alignment: .leading, spacing: 8) {
             Text(name).font(.headline).lineLimit(2)
-            row("Pending", "circle", .secondary, counts[.pending] ?? 0)
-            row("Called", "checkmark.circle.fill", .green, counts[.called] ?? 0)
-            row("No answer", "phone.down.fill", .secondary, counts[.noAnswer] ?? 0)
-            row("Do not call", "nosign", .red, counts[.doNotCall] ?? 0)
-            row("Skipped", "forward.fill", .orange, counts[.skipped] ?? 0)
+            row("Pending", "circle", .secondary, "\(counts[.pending] ?? 0)")
+            row("Called", "checkmark.circle.fill", .green, "\(counts[.called] ?? 0)")
+            row("No answer", "phone.down.fill", .secondary, "\(counts[.noAnswer] ?? 0)")
+            row("Do not call", "nosign", .red, "\(counts[.doNotCall] ?? 0)")
+            row("Skipped", "forward.fill", .orange, "\(counts[.skipped] ?? 0)")
             Divider()
-            row("Dials today", "phone.arrow.up.right", .secondary, runner.dialsToday)
-            if imported.filteredOut > 0 { row("Other callers", "person.2", .secondary, imported.filteredOut) }
+            row("Dials today", "phone.arrow.up.right", .secondary,
+                DialRunner.dialsTodayText(total: runner.dialsToday, test: runner.testDialsToday))
+            if imported.filteredOut > 0 { row("Other callers", "person.2", .secondary, "\(imported.filteredOut)") }
             if !imported.rejected.isEmpty {
                 DisclosureGroup("\(imported.rejected.count) rows rejected") {
                     ScrollView {
@@ -95,12 +96,12 @@ private struct ListSummary: View {
         }
     }
 
-    private func row(_ label: String, _ symbol: String, _ color: Color, _ n: Int) -> some View {
+    private func row(_ label: String, _ symbol: String, _ color: Color, _ value: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: symbol).foregroundStyle(color).frame(width: 18)
             Text(label).foregroundStyle(.secondary)
             Spacer()
-            Text("\(n)").monospacedDigit()
+            Text(value).monospacedDigit()
         }
         .font(.callout)
     }
