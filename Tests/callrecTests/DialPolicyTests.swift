@@ -27,8 +27,11 @@ enum DialFixture {
                          expectedSIM: expected, manualSIMConfirmed: confirmed)
     }
 
-    static func attempt(_ ts: Date, key: String = "9000000099", id: String = UUID().uuidString) -> DialLogEntry {
-        .attempt(at: ts, id: id, list: "fake", leadID: "L", key: key)
+    /// Each fixture attempt is its own lead unless `lead` is given: the failure streak
+    /// counts per lead (alt numbers of one business ringing out count once).
+    static func attempt(_ ts: Date, key: String = "9000000099", id: String = UUID().uuidString,
+                        lead: String? = nil) -> DialLogEntry {
+        .attempt(at: ts, id: id, list: "fake", leadID: lead ?? "L-\(id)", key: key)
     }
 
     static func result(_ ts: Date, _ r: DialResult, seconds: Int? = nil, sim: String? = nil) -> DialLogEntry {

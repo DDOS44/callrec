@@ -348,14 +348,16 @@ private func attempt(_ key: String, at ts: Date) -> DialLogEntry {
     equal(test, .allowed, "gap.testNumberUsesTestGap")
 }
 
-@Test func consecutiveFailureStreakCountsEveryUnansweredNumber() {
+// Changed 2026-10-08: one lead whose numbers all ring out counts ONCE (it used to count
+// each number, so a business with 3 dead lines paused the whole session).
+@Test func consecutiveFailureStreakCountsOneLeadOnce() {
     let rules = DialRules()
     var log: [DialLogEntry] = []
     for (i, key) in ["9000000001", "9000000201", "9000000202"].enumerated() {
         let a = attempt(key, at: t0.addingTimeInterval(Double(i) * 100))
         log += [a, a.finished(at: a.ts.addingTimeInterval(30), result: .noConnect)]
     }
-    equal(DialPolicy.trailingFailures(log: log, since: t0.addingTimeInterval(-1), rules: rules), 3, "streak.threeNumbers")
+    equal(DialPolicy.trailingFailures(log: log, since: t0.addingTimeInterval(-1), rules: rules), 1, "streak.oneLead")
 }
 
 // MARK: - DNC list: all numbers of one lead are one addition

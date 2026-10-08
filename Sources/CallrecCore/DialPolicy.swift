@@ -184,12 +184,18 @@ public enum DialPolicy {
     /// not connect, or connected for fewer than `shortCallSeconds`. A real call resets the
     /// streak; a not-placed dial neither counts nor resets it (it is not a carrier signal).
     public static func trailingFailures(log: [DialLogEntry], since start: Date, rules: DialRules) -> Int {
+        // Counted per LEAD, not per number: with alt-number fallback, one business whose
+        // three lines all ring out is normal and must not pause the session. A "barred"
+        // result is the real carrier-restriction signal, so it counts on every dial.
         var n = 0
+        var lastLead: String?
         for e in log.reversed() where e.kind == .result && e.ts >= start {
             guard let result = e.result, result != .notPlaced else { continue }
             let failed = result == .noConnect || result == .barred
                 || (result == .connected && (e.seconds ?? 0) < rules.shortCallSeconds)
-            if failed { n += 1 } else { break }
+            guard failed else { break }
+            if result == .barred || e.leadID != lastLead { n += 1 }
+            lastLead = e.leadID
         }
         return n
     }
