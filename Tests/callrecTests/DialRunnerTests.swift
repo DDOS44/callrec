@@ -358,3 +358,50 @@ private struct Rig {
     equal(closed, ["GHOST0", "GHOST1", "GHOST2"], "orphans.ghostsClosed")
     expect(r.dialLog.filter { $0.kind == .result }.allSatisfy { $0.result == .notPlaced }, "orphans.closedAsNotPlaced")
 }
+
+@MainActor @Test func skipCanBeUndoneAndQueueRowsCanMoveBack() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true)
+    // Skip is a countdown action: pass preflight but keep the dial from happening by checking the first lead's id.
+    let first = try #require(r.nextUp)
+    #expect(LeadStatus.afterMoveBack(current: .skipped) == .pending)
+    #expect(LeadStatus.afterMoveBack(current: .noAnswer) == .pending)
+    #expect(LeadStatus.afterMoveBack(current: .called) == .pending)
+    #expect(LeadStatus.afterMoveBack(current: .doNotCall) == nil, "do-not-call is permanent")
+    #expect(LeadStatus.afterMoveBack(current: .pending) == nil)
+
+    r.passPreflight()           // dials the first lead
+    r.stop()
+    // Mark the first lead no-answer and skip-undo a different one by hand through the queue actions.
+    let second = try #require(r.queue.first { $0.id != first.id && $0.status == .pending })
+    r.markDoNotCall(second.id)
+    equal(r.queue.first { $0.id == second.id }?.status, .doNotCall, "dnc.rowAction")
+    r.moveBackToQueue(second.id)
+    equal(r.queue.first { $0.id == second.id }?.status, .doNotCall, "dnc.neverMovedBack")
+}
+
+@MainActor @Test func skippingOffersUndoAndUndoRestoresPending() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true)
+    // Put the session in the countdown with a gap so skip is allowed, via a wrap-up of a first call.
+    r.passPreflight()
+    r.tick()
+    rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(2); r.tick()
+    rig.advance(30); rig.box.recording = false; r.tick(); await rig.settle()
+    r.saveWrapUp(outcome: "pitched", notes: "", doNotCall: false)
+    let target = try #require(r.nextUp)
+    r.skipNext()
+    equal(r.queue.first { $0.id == target.id }?.status, .skipped, "skip.marked")
+    equal(r.skipUndo?.leadID, target.id, "skip.undoOffered")
+    r.undoSkip()
+    equal(r.queue.first { $0.id == target.id }?.status, .pending, "skip.undone")
+    expect(r.skipUndo == nil, "skip.undoCleared")
+    // A called lead can be moved back from its row.
+    let done = try #require(r.queue.first { $0.status == .called })
+    r.moveBackToQueue(done.id)
+    equal(r.queue.first { $0.id == done.id }?.status, .pending, "row.calledMovedBack")
+}

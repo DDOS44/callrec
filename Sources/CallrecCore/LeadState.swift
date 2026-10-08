@@ -19,6 +19,17 @@ extension LeadStatus {
         if o.isEmpty { return current }
         return o == "no connect" ? .noAnswer : .called
     }
+
+    /// "Move back to queue": skipped, no-answer and called leads become pending again. Do-not-call
+    /// is permanent and a pending lead has nothing to undo, so both return nil. This only resets
+    /// the status; the 7-day no-redial rule is enforced at dial time from the dial log and call
+    /// history, so a real lead moved back still cannot be dialled inside its cooldown.
+    public static func afterMoveBack(current: LeadStatus) -> LeadStatus? {
+        switch current {
+        case .skipped, .noAnswer, .called: return .pending
+        case .pending, .doNotCall: return nil
+        }
+    }
 }
 
 /// What happened to one lead. Everything is optional-or-defaulted so a state file

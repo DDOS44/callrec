@@ -406,6 +406,14 @@ struct QueueSection: View {
             LazyVStack(alignment: .leading, spacing: 2) {
                 ForEach(runner.queue) { item in
                     QueueRow(item: item, isCurrent: item.id == focusID)
+                        .contextMenu {
+                            if LeadStatus.afterMoveBack(current: item.status) != nil, item.id != runner.session.currentLeadID {
+                                Button("Move back to queue") { runner.moveBackToQueue(item.id) }
+                            }
+                            if item.status != .doNotCall, item.id != runner.session.currentLeadID {
+                                Button("Do not call", role: .destructive) { runner.markDoNotCall(item.id) }
+                            }
+                        }
                 }
             }
         }

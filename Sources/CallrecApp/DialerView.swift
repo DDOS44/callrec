@@ -173,6 +173,19 @@ private struct DialerSession: View {
                     runner.dismissSaveNote()
                 }
         }
+        if let undo = runner.skipUndo {
+            HStack {
+                Label("Skipped \(undo.title)", systemImage: "forward.fill").font(.callout.weight(.medium))
+                Spacer()
+                Button("Undo") { runner.undoSkip() }.buttonStyle(.borderless).foregroundStyle(Color.accentColor)
+            }
+            .padding(12)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .task(id: undo.leadID) {
+                do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+                runner.dismissSkipUndo()
+            }
+        }
         // A pause or stop that waits for the call to finish. Paused and stopped states carry
         // their reason in the header capsule.
         if runner.session.pendingHalt != nil, let text = runner.session.banner {

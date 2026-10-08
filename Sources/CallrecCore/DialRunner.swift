@@ -273,9 +273,42 @@ public final class DialRunner: ObservableObject {
     public func stop() { perform(session.handle(.stop)); if !session.isRunning { stopTimer() } }
     public func doNotCallAgain() { perform(session.handle(.doNotCallAgain)) }
     public func dialNow() { perform(session.handle(.dialNow(now: services.now()))) }
+    public struct SkipUndo: Equatable, Sendable { public var leadID: String; public var title: String }
+    /// The lead just skipped, offered for undo for a few seconds by the view.
+    @Published public private(set) var skipUndo: SkipUndo?
+
     public func skipNext() {
-        guard let id = nextUp?.id else { return }
-        perform(session.handle(.skipNext(leadID: id)))
+        guard let item = nextUp else { return }
+        perform(session.handle(.skipNext(leadID: item.id)))
+        if queue.first(where: { $0.id == item.id })?.status == .skipped {
+            skipUndo = SkipUndo(leadID: item.id, title: item.lead.title)
+        }
+    }
+
+    public func undoSkip() {
+        guard let u = skipUndo else { return }
+        skipUndo = nil
+        moveBackToQueue(u.leadID)
+    }
+
+    public func dismissSkipUndo() { skipUndo = nil }
+
+    /// Queue-row action: puts a skipped / no-answer / called lead back to pending. Never the lead
+    /// the session is working on. The cooldown still applies when it is next dialled.
+    public func moveBackToQueue(_ id: String) {
+        guard id != session.currentLeadID, let current = queue.first(where: { $0.id == id })?.status,
+              let next = LeadStatus.afterMoveBack(current: current) else { return }
+        setStatus(id, next)
+        objectWillChange.send()
+    }
+
+    /// Queue-row action: the lead's number goes on the do-not-call list for good.
+    public func markDoNotCall(_ id: String) {
+        guard id != session.currentLeadID else { return }
+        addToDNC(id)
+        setStatus(id, .doNotCall)
+        if skipUndo?.leadID == id { skipUndo = nil }
+        objectWillChange.send()
     }
     public func resume() {
         perform(session.handle(.resume(now: services.now(), gap: rules.randomGap(using: &rng), minGap: rules.gapMin)))
