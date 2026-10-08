@@ -511,19 +511,16 @@ struct WrapUpSheet: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("Notes").font(.headline)
-                TextEditor(text: $notes)
+                // One control draws both placeholder and caret, so they share the exact same inset.
+                TextField("", text: $notes,
+                          prompt: Text("What did they say? Objections, next step, who to ask for…"),
+                          axis: .vertical)
+                    .textFieldStyle(.plain)
                     .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .frame(minHeight: 96)
+                    .lineLimit(4...8)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                     .background(Color.secondary.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(alignment: .topLeading) {
-                        if notes.isEmpty {
-                            Text("What did they say? Objections, next step, who to ask for…")
-                                .foregroundStyle(.tertiary).padding(.horizontal, 13).padding(.vertical, 16)
-                                .allowsHitTesting(false)
-                        }
-                    }
             }
             HStack(spacing: 12) {
                 Image(systemName: "nosign").foregroundStyle(.red)
