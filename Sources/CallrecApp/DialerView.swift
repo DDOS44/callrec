@@ -139,9 +139,11 @@ private struct DialerSession: View {
                     banners
                     recovery
                     phaseCard
-                    if let item = runner.current ?? runner.nextUp {
+                    if let item = runner.focus {
+                        let progress = runner.numberProgress.flatMap { $0.leadID == item.id ? $0 : nil }
                         LeadHero(item: item, isCalling: runner.current != nil, isTest: runner.isTestLead(item.lead),
-                                 calledBefore: runner.snapshot?.lastCallByKey[item.lead.number])
+                                 progress: progress,
+                                 calledBefore: runner.snapshot?.lastCallByKey[progress?.number ?? item.lead.number])
                     }
                     QueueSection(runner: runner)
                 }

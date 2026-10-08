@@ -26,7 +26,7 @@ struct SessionHeader: View {
     @ObservedObject var runner: DialRunner
 
     private var phase: DialSession.Phase { runner.session.phase }
-    private var focus: QueueItem? { runner.current ?? runner.nextUp }
+    private var focus: QueueItem? { runner.focus }
 
     private var position: Int? {
         guard let id = focus?.id, let i = runner.queue.firstIndex(where: { $0.id == id }) else { return nil }
@@ -66,7 +66,7 @@ struct SessionHeader: View {
                 EmptyView()
             default:
                 Button { runner.pause() } label: { Label("Pause", systemImage: "pause.fill") }
-                if case .countdown = phase {
+                if case .countdown(let c) = phase, !c.altFallback {
                     Button { runner.skipNext() } label: { Label("Skip", systemImage: "forward.fill") }
                 }
                 Button(role: .destructive) { runner.stop() } label: { Label("Stop", systemImage: "stop.fill") }
@@ -220,6 +220,8 @@ struct LeadHero: View {
     let item: QueueItem
     let isCalling: Bool
     let isTest: Bool
+    /// Which of the lead's numbers is on the line or due next; nil before the lead's first dial.
+    var progress: DialRunner.NumberProgress?
     /// Last time this number appears in call history (either direction), if ever.
     var calledBefore: Date?
 
@@ -229,7 +231,7 @@ struct LeadHero: View {
         let lead = item.lead
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text(isCalling ? "CALLING" : "NEXT UP").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(heading).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 ConfidenceDot(confidence: lead.confidence, showWord: true)
             }
@@ -239,22 +241,12 @@ struct LeadHero: View {
                 if !sub.isEmpty { Text(sub).font(.subheadline).foregroundStyle(.secondary) }
             }
             HStack(spacing: 8) {
-                Text(PhoneNumber.display(lead.number)).font(.system(.title3, design: .monospaced).weight(.medium)).monospacedDigit()
+                Text(PhoneNumber.display(active)).font(.system(.title3, design: .monospaced).weight(.medium)).monospacedDigit()
                     .textSelection(.enabled)
-                Button { copy(lead.number) } label: { Image(systemName: copied ? "checkmark" : "doc.on.doc") }
+                Button { copy(active) } label: { Image(systemName: copied ? "checkmark" : "doc.on.doc") }
                     .buttonStyle(.borderless).help("Copy the number")
             }
-            if !lead.altNumbers.isEmpty {
-                // Shown and copyable, never auto-dialled: only the main number goes through the guardrails.
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("Also").font(.caption).foregroundStyle(.secondary)
-                    ForEach(lead.altNumbers, id: \.self) { alt in
-                        Text(PhoneNumber.display(alt)).font(.callout.monospacedDigit()).textSelection(.enabled)
-                        Button { copy(alt) } label: { Image(systemName: "doc.on.doc").font(.caption) }
-                            .buttonStyle(.borderless).help("Copy this number")
-                    }
-                }
-            }
+            if !lead.altNumbers.isEmpty { numberList(lead) }
             if !lead.whatTheyDo.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("What they do").font(.caption).foregroundStyle(.secondary)
@@ -278,6 +270,33 @@ struct LeadHero: View {
         }
         .card()
         .onChange(of: item.id) { copied = false }
+    }
+
+    /// The number on the line or due next. Before any dial, the main number.
+    private var active: String { progress?.number ?? item.lead.number }
+
+    private var heading: String {
+        guard isCalling || progress != nil else { return "NEXT UP" }
+        let base = isCalling ? "CALLING" : "NEXT"
+        return progress.map { "\(base) · \($0.label.uppercased())" } ?? base
+    }
+
+    /// Every number of the lead, the one in play highlighted. Each is also copyable.
+    private func numberList(_ lead: Lead) -> some View {
+        let all = [lead.number] + lead.altNumbers.filter { $0 != lead.number }
+        return VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(all.enumerated()), id: \.element) { i, n in
+                HStack(spacing: 8) {
+                    Text(i == 0 ? "Main" : "Alt \(i)").font(.caption).foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
+                    Text(PhoneNumber.display(n)).font(.callout.monospacedDigit()).textSelection(.enabled)
+                    Button { copy(n) } label: { Image(systemName: "doc.on.doc").font(.caption) }
+                        .buttonStyle(.borderless).help("Copy this number")
+                    if n == active { Image(systemName: "phone.fill").font(.caption).foregroundStyle(Color.accentColor) }
+                }
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(n == active ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            }
+        }
     }
 
     private func copy(_ number: String) {
@@ -354,10 +373,14 @@ struct CountdownCard: View {
                 }
                 .frame(width: 88, height: 88)
                 VStack(alignment: .leading, spacing: 8) {
+                    if let notice = runner.altNotice(for: countdown) {
+                        Text("\(notice) in \(clock(TimeInterval(left)))").font(.headline).monospacedDigit()
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if let blocked = countdown.blocked {
                         Label(blocked.message, systemImage: "hourglass").font(.callout).foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)
-                    } else {
+                    } else if !countdown.altFallback {
                         Text("Next call").font(.headline)
                         Text("A random gap between calls keeps the pace human.").font(.caption).foregroundStyle(.secondary)
                     }
@@ -365,7 +388,11 @@ struct CountdownCard: View {
                         Button { runner.dialNow() } label: { Label("Dial now", systemImage: "phone.fill") }
                             .buttonStyle(.borderedProminent)
                             .disabled(!runner.session.canDialNow(at: now))
-                        Button { runner.skipNext() } label: { Label("Skip next", systemImage: "forward.fill") }
+                        if countdown.altFallback {
+                            Button { runner.skipRemainingNumbers() } label: { Label("Skip remaining numbers", systemImage: "forward.fill") }
+                        } else {
+                            Button { runner.skipNext() } label: { Label("Skip next", systemImage: "forward.fill") }
+                        }
                     }
                     .controlSize(.large)
                     if unlockIn > 0 { Text("Dial now unlocks in \(unlockIn) s").font(.caption).foregroundStyle(.tertiary) }
@@ -407,7 +434,8 @@ struct QueueSection: View {
     @ObservedObject var runner: DialRunner
 
     var body: some View {
-        let focusID = (runner.current ?? runner.nextUp)?.id
+        let focusID = runner.focus?.id
+        let altsOn = runner.services.config.tryAltNumbers
         let pending = LeadQueue.counts(runner.queue)[.pending] ?? 0
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
@@ -416,7 +444,8 @@ struct QueueSection: View {
             }
             LazyVStack(alignment: .leading, spacing: 2) {
                 ForEach(runner.queue) { item in
-                    QueueRow(item: item, isCurrent: item.id == focusID)
+                    QueueRow(item: item, isCurrent: item.id == focusID,
+                             altBadge: altsOn ? AltNumbers.queueBadge(altCount: AltNumbers.sequence(for: item.lead).count - 1) : nil)
                         .contextMenu {
                             if LeadStatus.afterMoveBack(current: item.status) != nil, item.id != runner.session.currentLeadID {
                                 Button("Move back to queue") { runner.moveBackToQueue(item.id) }
@@ -434,6 +463,7 @@ struct QueueSection: View {
 private struct QueueRow: View {
     let item: QueueItem
     let isCurrent: Bool
+    var altBadge: String?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -444,6 +474,7 @@ private struct QueueRow: View {
                 if !sub.isEmpty { Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             }
             Spacer(minLength: 8)
+            if let altBadge { Text(altBadge).font(.caption2).foregroundStyle(.secondary) }
             if item.status == .called, !item.record.outcome.isEmpty {
                 Text(item.record.outcome).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
