@@ -74,6 +74,14 @@ struct Sidebar: View {
                 Label("Calendar", systemImage: "calendar.day.timeline.left")
                     .tag(AppModel.calendarTag)
             }
+            Section("Outcomes") {
+                ForEach(Outcome.allCases.filter { $0 != .none }) { outcome in
+                    OutcomeRow(name: outcome.rawValue, color: outcome.color, count: model.outcomeCounts[outcome.rawValue] ?? 0)
+                        .tag(AppModel.outcomeTag(outcome.rawValue))
+                }
+                OutcomeRow(name: "Untagged", color: .secondary, count: model.outcomeCounts[OutcomeBuckets.untagged] ?? 0)
+                    .tag(AppModel.outcomeTag(OutcomeBuckets.untagged))
+            }
             Section("Days") {
                 Label("All calls", systemImage: "tray.full")
                     .badge(model.allCalls.count)
@@ -91,6 +99,21 @@ struct Sidebar: View {
 
     private func icon(for day: Day) -> String {
         day.pretty == "Today" ? "calendar.badge.clock" : "calendar"
+    }
+}
+
+private struct OutcomeRow: View {
+    let name: String
+    let color: Color
+    let count: Int
+
+    var body: some View {
+        Label {
+            Text(name)
+        } icon: {
+            Circle().fill(color).frame(width: 9, height: 9)
+        }
+        .badge(count)
     }
 }
 
@@ -118,9 +141,18 @@ struct CallListBody: View {
         if model.visibleCalls.isEmpty {
             emptyState
         } else {
-            List(model.visibleCalls, selection: Binding(get: { model.selectedCalls }, set: { model.setSelection($0) })) { call in
-                CallRow(call: call, showDay: model.selectedDay == AppModel.allDaysTag)
-                    .tag(call.id)
+            List(selection: Binding(get: { model.selectedCalls }, set: { model.setSelection($0) })) {
+                if model.selectedOutcomeBucket != nil {
+                    ForEach(model.outcomeDays) { day in
+                        Section(day.pretty) {
+                            ForEach(day.calls) { call in CallRow(call: call).tag(call.id) }
+                        }
+                    }
+                } else {
+                    ForEach(model.visibleCalls) { call in
+                        CallRow(call: call, showDay: model.selectedDay == AppModel.allDaysTag).tag(call.id)
+                    }
+                }
             }
             .contextMenu(forSelectionType: String.self) { ids in
                 Button("Move to Trash…", systemImage: "trash") { model.requestTrash(ids) }
@@ -149,7 +181,9 @@ struct CallListBody: View {
     }
 
     private var emptyTitle: String {
-        model.selectedDay == AppModel.calendarTag ? "No calls on this day" : "No calls yet today"
+        if model.selectedDay == AppModel.calendarTag { return "No calls on this day" }
+        if model.selectedOutcomeBucket != nil { return "No calls with this outcome" }
+        return "No calls yet today"
     }
 }
 

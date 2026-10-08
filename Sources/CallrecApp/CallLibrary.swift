@@ -213,6 +213,9 @@ enum Outcome: String, CaseIterable, Identifiable {
     case nurture = "nurture"
     case test = "test"
 
+    /// Outcome names a call can carry (everything except "no outcome").
+    static let knownNames: [String] = allCases.filter { $0 != .none }.map(\.rawValue)
+
     var id: String { rawValue }
     var label: String { self == .none ? "clear" : rawValue }
 

@@ -95,7 +95,8 @@ struct CallDetailView: View {
                 ForEach(Outcome.allCases.filter { $0 != .none }) { option in
                     Button {
                         outcome = (outcome == option) ? .none : option
-                        scheduleSave()
+                        // At once, not after the typing delay: counts and lists in the sidebar follow the outcome.
+                        saveNow()
                     } label: {
                         Text(option.rawValue)
                             .frame(maxWidth: .infinity)

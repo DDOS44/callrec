@@ -16,6 +16,8 @@ final class AppModel: ObservableObject {
     @Published var calendarDay: String? = CallCalendar.key(Date(), calendar: .current)
     /// Derived from `days` and `calendarMonth` whenever either changes, never in a view body.
     @Published private(set) var monthSummary = CallCalendar.Month()
+    /// Calls per outcome bucket across ALL days (key "" = untagged). Kept in step with `days`.
+    @Published private(set) var outcomeCounts: [String: Int] = [:]
     /// Calls waiting for the "Move to Trash" confirmation.
     @Published var pendingTrash: [String] = []
     @Published var trashProblem: String?
@@ -161,12 +163,34 @@ final class AppModel: ObservableObject {
     static let calendarTag = "__calendar__"
 
     private func recomputeDerived() {
-        monthSummary = CallCalendar.summarize(allCalls.map(\.facts), month: calendarMonth, calendar: .current)
+        let calls = allCalls
+        monthSummary = CallCalendar.summarize(calls.map(\.facts), month: calendarMonth, calendar: .current)
+        outcomeCounts = OutcomeBuckets.counts(calls.map(\.outcome), known: Outcome.knownNames)
+    }
+
+    static let outcomeTagPrefix = "__outcome__:"
+
+    static func outcomeTag(_ bucket: String) -> String { outcomeTagPrefix + bucket }
+
+    /// The bucket ("" = untagged) when the sidebar row is an outcome, else nil.
+    var selectedOutcomeBucket: String? {
+        guard let tag = selectedDay, tag.hasPrefix(AppModel.outcomeTagPrefix) else { return nil }
+        return String(tag.dropFirst(AppModel.outcomeTagPrefix.count))
+    }
+
+    /// Every call with the selected outcome, from all days, newest first, grouped by day. The search still applies.
+    var outcomeDays: [Day] {
+        guard let bucket = selectedOutcomeBucket else { return [] }
+        return filteredDays.compactMap { day in
+            let hits = day.calls.filter { OutcomeBuckets.bucket(for: $0.outcome, known: Outcome.knownNames) == bucket }
+            return hits.isEmpty ? nil : Day(name: day.name, calls: hits)
+        }
     }
 
     /// Sidebar rows that are not a day folder.
     static func isVirtual(_ tag: String?) -> Bool {
-        tag == dialerTag || tag == calendarTag || tag == allDaysTag
+        guard let tag else { return false }
+        return tag == dialerTag || tag == calendarTag || tag == allDaysTag || tag.hasPrefix(outcomeTagPrefix)
     }
 
     func pickCalendarDay(_ key: String) {
@@ -191,12 +215,14 @@ final class AppModel: ObservableObject {
     var visibleCalls: [Call] {
         if selectedDay == AppModel.allDaysTag { return filteredDays.flatMap(\.calls) }
         if selectedDay == AppModel.calendarTag { return callsForCalendarDay }
+        if selectedOutcomeBucket != nil { return outcomeDays.flatMap(\.calls) }
         return callsForSelectedDay
     }
 
     var columnTitle: String {
         if selectedDay == AppModel.allDaysTag { return "All calls" }
         if selectedDay == AppModel.calendarTag { return "Calendar" }
+        if let bucket = selectedOutcomeBucket { return bucket.isEmpty ? "Untagged" : bucket.prefix(1).uppercased() + bucket.dropFirst() }
         return filteredDays.first(where: { $0.name == selectedDay })?.pretty ?? "Calls"
     }
 
