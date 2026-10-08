@@ -63,8 +63,8 @@ private func testRules(_ keys: Set<String> = ["9000000077"]) -> DialRules {
 }
 
 @Test func numbersAreShownInTheIndianGrouping() {
-    equal(PhoneNumber.display("+918219971169"), "+91 82199 71169", "disp.e164")
-    equal(PhoneNumber.display("08219971169"), "+91 82199 71169", "disp.trunk")
+    equal(PhoneNumber.display("+919000000101"), "+91 90000 00101", "disp.e164")
+    equal(PhoneNumber.display("09000000101"), "+91 90000 00101", "disp.trunk")
     equal(PhoneNumber.display("9000000001"), "+91 90000 00001", "disp.plain")
     equal(PhoneNumber.display(" +44 20 7946 0958 "), "+44 20 7946 0958", "disp.foreignUntouched")
     equal(PhoneNumber.display(""), "", "disp.empty")
