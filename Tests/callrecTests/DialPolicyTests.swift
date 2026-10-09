@@ -397,3 +397,20 @@ private typealias F = DialFixture
     equal(DialRules.secondsOfDay("9:05"), 9 * 3600 + 300, "cfg.hourLenient")
     equal(DialRules.secondsOfDay("nope"), nil, "cfg.hourGarbage")
 }
+
+// Security review 2026-10-09: the dial log stores the number as dialled. Cooldown and the
+// test-number exemption must match it in any written form, not rely on the importer having
+// normalised it (a "+91 90000 00001" log line would otherwise slip past the 7-day rule).
+@Test func cooldownAndCapsMatchTheLogInAnyNumberFormat() {
+    let now = F.at(8, 12)
+    for written in ["+91 90000 00001", "09000000001", "+919000000001", "90000-00001"] {
+        let log = [F.attempt(F.at(7, 12), key: written)]
+        if case .blocked(.cooldown) = F.decide("9000000001", now: now, log: log) {} else {
+            Issue.record("cooldown must match a log key written as \(written)")
+        }
+    }
+    var r = DialRules(); r.testKeys = ["9000000077"]
+    let testDials = (0..<40).map { F.attempt(F.at(8, 11, $0), key: "+91 90000 00077") }
+    expect(F.decide("9000000002", now: now, rules: r, log: testDials) == .allowed,
+           "policy.testDialsInAnyFormatDoNotEatTheCap")
+}

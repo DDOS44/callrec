@@ -210,11 +210,17 @@ public enum DialPolicy {
         // A dial that never placed a call (macOS did not start it) did not ring the number,
         // so it does not start a cooldown. It still counts against the caps.
         let notPlaced = Set(log.filter { $0.kind == .result && $0.result == .notPlaced }.map(\.attemptID))
-        let lastDial = log.filter { $0.kind == .attempt && $0.key == key && !notPlaced.contains($0.attemptID) }.map(\.ts).max()
+        let lastDial = log.filter { $0.kind == .attempt && logKey($0) == key && !notPlaced.contains($0.attemptID) }.map(\.ts).max()
         let last = [lastDial, history[key]].compactMap { $0 }.max()
         guard let last else { return nil }
         let free = last.addingTimeInterval(window)
         return now < free ? free : nil
+    }
+
+    /// A log entry's number in the same 10-digit form the policy compares against. The log stores
+    /// the number as dialled; matching must not depend on every writer having normalised it.
+    static func logKey(_ e: DialLogEntry) -> String {
+        PhoneNumber.normalize(e.key) ?? PhoneNumber.key(e.key) ?? e.key
     }
 
     static func isoWeekday(_ date: Date, _ calendar: Calendar) -> Int {
@@ -263,7 +269,7 @@ public enum DialPolicy {
 
     static func capBlock(now: Date, rules: DialRules, log: [DialLogEntry], calendar: Calendar) -> DialBlock? {
         // Test dials to the user's own numbers never count against the real caps.
-        let attempts = log.filter { $0.kind == .attempt && !rules.testKeys.contains($0.key) }
+        let attempts = log.filter { $0.kind == .attempt && !rules.testKeys.contains(logKey($0)) }
         let today = attempts.filter { calendar.isDate($0.ts, inSameDayAs: now) }
         if today.count >= rules.dailyCap {
             let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86_400)
