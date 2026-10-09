@@ -23,6 +23,10 @@ jobs:
         run: brew install ffmpeg
       - name: Run tests
         run: ./scripts/test.sh
+      # Same suite under AddressSanitizer: a memory bug (use-after-free, overflow)
+      # blocks the release even when the normal run passes.
+      - name: Run tests under AddressSanitizer
+        run: ./scripts/sanitize.sh
       - name: Build release binary
         run: swift build -c release --arch arm64
       - name: Stage binary
