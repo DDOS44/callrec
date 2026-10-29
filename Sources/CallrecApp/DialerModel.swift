@@ -36,7 +36,7 @@ final class DialerModel: ObservableObject {
         guard let leads = imported?.leads, !contactsBusy else { return }
         contactsBusy = true; contactsNote = "Saving \(leads.count) leads to Contacts…"
         Task {
-            do { contactsNote = try await ContactsSync.save(leads, skip: Config.load().dialRules.testKeys).text } catch { contactsNote = error.localizedDescription }
+            do { contactsNote = try await ContactsSync.save(leads, skip: Config.load().dialRules.testKeys).text } catch { contactsNote = ContactsSync.explain(error) }
             contactsBusy = false
         }
     }
@@ -45,7 +45,7 @@ final class DialerModel: ObservableObject {
         guard !contactsBusy else { return }
         contactsBusy = true
         Task {
-            do { contactsNote = "Removed \(try await ContactsSync.removeAll()) callrec lead contacts." } catch { contactsNote = error.localizedDescription }
+            do { contactsNote = "Removed \(try await ContactsSync.removeAll()) callrec lead contacts." } catch { contactsNote = ContactsSync.explain(error) }
             contactsBusy = false
         }
     }
