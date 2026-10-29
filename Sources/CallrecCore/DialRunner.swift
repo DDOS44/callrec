@@ -137,17 +137,37 @@ public final class DialRunner: ObservableObject {
         return LeadQueue.nextUp(queue)
     }
 
-    /// Queue row click: make this lead the next dial. A lead already finished (called, no answer,
-    /// skipped) is moved back to pending first; a do-not-call lead never is. The 7-day rule and every
-    /// other guardrail still apply when it is dialled. Not while a call is placed, on, or wrapped up.
+    /// A finished lead the user clicked to look at (it is shown on the card; nothing about it changes).
+    @Published public private(set) var viewing: String?
+
+    /// Queue row click. A pending lead becomes the next dial. A finished lead (called, no answer,
+    /// skipped, do-not-call) is only SHOWN: its status and outcome stay. "Call again" re-queues it.
+    /// Not while a call is placed, on, or wrapped up.
     public func callNext(_ id: String) {
         guard canChooseNumber, id != session.currentLeadID,
-              let item = queue.first(where: { $0.id == id }), item.status != .doNotCall else { return }
-        if item.status != .pending, let back = LeadStatus.afterMoveBack(current: item.status) { setStatus(id, back) }
+              let item = queue.first(where: { $0.id == id }) else { return }
+        guard item.status == .pending else { viewing = id; objectWillChange.send(); return }
+        pick(id)
+    }
+
+    /// "Call again" on a finished lead: back to pending, and it is the next dial. Never do-not-call.
+    /// The 7-day rule and every other guardrail still apply when it is dialled.
+    public func callAgain(_ id: String) {
+        guard canChooseNumber, id != session.currentLeadID, let item = queue.first(where: { $0.id == id }),
+              let back = LeadStatus.afterMoveBack(current: item.status) else { return }
+        setStatus(id, back)
+        pick(id)
+    }
+
+    /// Leave a finished lead being looked at; the card shows the next dial again.
+    public func stopViewing() { viewing = nil; objectWillChange.send() }
+
+    private func pick(_ id: String) {
         if skipUndo?.leadID == id { skipUndo = nil }
         // Leaving a lead part-way through its numbers: its remaining numbers are dropped, it stays pending.
         if let p = numberProgress, p.leadID != id { activeSequence = nil }
         pickedNext = id
+        viewing = nil
         objectWillChange.send()
     }
 
@@ -182,6 +202,7 @@ public final class DialRunner: ObservableObject {
     /// The lead in front of the user: the one on the line, else the one whose alt number is due, else the next in the queue.
     public var focus: QueueItem? {
         if let c = current { return c }
+        if let v = viewing, let item = queue.first(where: { $0.id == v }) { return item }
         if let p = numberProgress, let item = queue.first(where: { $0.id == p.leadID }), item.status == .pending { return item }
         return nextUp
     }
@@ -540,6 +561,7 @@ public final class DialRunner: ObservableObject {
 
     private func evaluateNext() {
         let now = services.now()
+        viewing = nil
         // A lead part-way through its numbers goes first, unless something changed its status meanwhile
         // (skipped, do-not-call, moved back): then it is no longer ours to continue.
         var next = nextUp

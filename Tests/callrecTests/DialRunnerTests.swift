@@ -432,22 +432,27 @@ private struct Rig {
     equal(r.nextUp?.id ?? "", "9000000001", "pick.thenBackToListOrder")
 }
 
-@MainActor @Test func clickingAFinishedLeadMovesItBackButNeverADoNotCallOne() async throws {
+// 2026-10-29: clicking a called lead (going back a step to look at it) used to move it back to
+// pending, wiping its green tick. Clicking only shows a finished lead; "Call again" re-queues it.
+@MainActor @Test func clickingAFinishedLeadOnlyShowsItUntilCallAgain() async throws {
     let rig = try Rig()
     defer { Fs.remove(rig.dir) }
     let r = rig.runner
     r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()   // dials lead 1
     r.tick(); rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(2); r.tick()
     rig.advance(60); rig.box.recording = false; r.tick(); await rig.settle()
-    r.saveWrapUp(outcome: "callback", notes: "", doNotCall: false)
-    equal(r.queue.first { $0.id == "9000000001" }?.status, .called, "pickBack.calledFirst")
+    r.saveWrapUp(outcome: "nurture", notes: "", doNotCall: false)
     r.callNext("9000000001")
-    equal(r.queue.first { $0.id == "9000000001" }?.status, .pending, "pickBack.pending")
-    equal(r.nextUp?.id ?? "", "9000000001", "pickBack.next")
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .called, "view.statusKept")
+    equal(r.queue.first { $0.id == "9000000001" }?.record.outcome ?? "", "nurture", "view.outcomeKept")
+    equal(r.focus?.id ?? "", "9000000001", "view.shownOnTheCard")
+    equal(r.nextUp?.id ?? "", "9000000002", "view.nextDialUnchanged")
+    r.callAgain("9000000001")
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .pending, "again.pending")
+    equal(r.nextUp?.id ?? "", "9000000001", "again.next")
     r.markDoNotCall("9000000002")
-    r.callNext("9000000002")
-    equal(r.queue.first { $0.id == "9000000002" }?.status, .doNotCall, "pickDNC.untouched")
-    equal(r.nextUp?.id ?? "", "9000000001", "pickDNC.notNext")
+    r.callAgain("9000000002")
+    equal(r.queue.first { $0.id == "9000000002" }?.status, .doNotCall, "againDNC.untouched")
 }
 
 @MainActor @Test func stepMovesTheNextLeadBackAndForthThroughPendingLeads() async throws {

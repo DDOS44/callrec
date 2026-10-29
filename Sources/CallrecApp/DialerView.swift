@@ -139,6 +139,10 @@ private struct DialerSession: View {
                     banners
                     recovery
                     phaseCard
+                    if let id = runner.viewing, let item = runner.queue.first(where: { $0.id == id }), item.status != .pending {
+                        ViewingBanner(item: item, canCallAgain: runner.canChooseNumber && item.status != .doNotCall,
+                                      callAgain: { runner.callAgain(id) }, back: { runner.stopViewing() })
+                    }
                     if let item = runner.focus {
                         let progress = runner.numberProgress.flatMap { $0.leadID == item.id ? $0 : nil }
                         LeadHero(item: item, isCalling: runner.current != nil, isTest: runner.isTestLead(item.lead),

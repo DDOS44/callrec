@@ -471,7 +471,7 @@ struct QueueSection: View {
                         .contentShape(Rectangle())
                         .onTapGesture { runner.callNext(item.id) }
                         .contextMenu {
-                            if item.status != .doNotCall, item.id != runner.session.currentLeadID {
+                            if item.status == .pending, item.id != runner.session.currentLeadID {
                                 Button("Call this lead next") { runner.callNext(item.id) }
                             }
                             if LeadStatus.afterMoveBack(current: item.status) != nil, item.id != runner.session.currentLeadID {
@@ -787,4 +787,41 @@ struct BookingBox: View {
     }
     private static let time: DateFormatter = { let f = DateFormatter(); f.dateFormat = "h:mm a"; return f }()
     private static let long: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE d MMM, h:mm a"; return f }()
+}
+
+// MARK: - Looking at a finished lead
+
+/// Shown above the card when a finished lead was clicked in the queue: it is only being looked at.
+struct ViewingBanner: View {
+    let item: QueueItem
+    let canCallAgain: Bool
+    let callAgain: () -> Void
+    let back: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "eye").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Looking at \(item.lead.title)").font(.callout.weight(.semibold))
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if canCallAgain { Button("Call again", action: callAgain).help("Put it back in the queue as the next dial") }
+            Button("Back to next up", action: back).buttonStyle(.borderedProminent)
+        }
+        .card()
+    }
+
+    private var detail: String {
+        let status: String
+        switch item.status {
+        case .called: status = "Called"
+        case .noAnswer: status = "No answer"
+        case .skipped: status = "Skipped"
+        case .doNotCall: status = "Do not call"
+        case .pending: status = "Pending"
+        }
+        let outcome = item.record.outcome.isEmpty ? "" : " · \(item.record.outcome)"
+        return "\(status)\(outcome). Nothing changes unless you press Call again."
+    }
 }
