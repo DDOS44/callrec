@@ -8,6 +8,10 @@ struct CallrecAppMain: App {
     @StateObject private var dialer = DialerModel()
 
     init() {
+        if let i = CommandLine.arguments.firstIndex(of: "--snapshot-booking"), i + 1 < CommandLine.arguments.count {
+            BookingSnapshot.render(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+            exit(0)
+        }
         Permissions.lockDownProcess()
         _model = StateObject(wrappedValue: AppModel())
     }

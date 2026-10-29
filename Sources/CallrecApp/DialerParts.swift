@@ -663,6 +663,8 @@ private struct OutcomeChip: View {
 struct BookingBox: View {
     @ObservedObject var runner: DialRunner
     let leadID: String
+    /// Snapshot only: fill the box without a network call (see --snapshot-booking).
+    var preview: (name: String, email: String, slots: [Date], picked: Date?)?
     @State private var name = ""
     @State private var email = ""
     @State private var day = Calendar.current.startOfDay(for: Date())
@@ -694,7 +696,7 @@ struct BookingBox: View {
         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
         .onAppear(perform: reset)
         .onChange(of: leadID) { reset() }
-        .task(id: day) { await load() }
+        .task(id: day) { if preview == nil { await load() } }
     }
 
     private var slotPicker: some View {
@@ -760,6 +762,11 @@ struct BookingBox: View {
     }
 
     private func reset() {
+        if let p = preview {
+            name = p.name; email = p.email; slots = p.slots; picked = p.picked
+            if let first = p.slots.first { day = Calendar.current.startOfDay(for: first) }
+            return
+        }
         email = runner.bookingEmail(for: leadID)
         let owner = runner.queue.first { $0.id == leadID }?.lead.owner ?? ""
         name = owner.split(separator: "(").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""

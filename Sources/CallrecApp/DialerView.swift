@@ -128,6 +128,8 @@ struct DialerMainColumn: View {
 
 private struct DialerSession: View {
     @ObservedObject var runner: DialRunner
+    /// The lead whose booking box was opened from the card (outside a call).
+    @State private var bookingOpenFor: String?
 
     private var phase: DialSession.Phase { runner.session.phase }
 
@@ -151,8 +153,16 @@ private struct DialerSession: View {
                                  calledBefore: runner.snapshot?.lastCallByKey[progress?.number ?? item.lead.number],
                                  onChoose: runner.canChooseNumber ? { runner.chooseNumber($0, for: item.id) } : nil,
                                  onStep: runner.canChooseNumber && runner.current == nil ? { runner.step($0) } : nil)
-                        if runner.current?.id == item.id, runner.canBook || !runner.services.config.bookingLink.isEmpty {
-                            BookingBox(runner: runner, leadID: item.id)
+                        if runner.canBook || !runner.services.config.bookingLink.isEmpty {
+                            // Always on the card during a call; otherwise one click away.
+                            if runner.current?.id == item.id || bookingOpenFor == item.id {
+                                BookingBox(runner: runner, leadID: item.id)
+                            } else {
+                                Button { bookingOpenFor = item.id } label: {
+                                    Label("Book a meeting with \(item.lead.title)", systemImage: "calendar.badge.plus")
+                                }
+                                .controlSize(.large)
+                            }
                         }
                     }
                     QueueSection(runner: runner)

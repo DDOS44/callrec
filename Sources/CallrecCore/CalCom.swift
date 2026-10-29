@@ -56,6 +56,7 @@ public struct CalCom: Sendable {
 
     public struct Failure: Error, LocalizedError, Equatable {
         public var message: String
+        public init(message: String) { self.message = message }
         public var errorDescription: String? { message }
     }
 
