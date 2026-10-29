@@ -128,7 +128,7 @@ public struct Config: Codable, Sendable {
     public func save() throws {
         try Paths.ensureDir(Config.url.deletingLastPathComponent())
         let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try e.encode(self).write(to: Config.url)
+        try e.encode(self).write(to: Config.url, options: .atomic)
     }
 
     public var recordingsURL: URL { URL(fileURLWithPath: (recordingsDir as NSString).expandingTildeInPath) }

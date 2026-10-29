@@ -43,9 +43,10 @@ public enum AltNumbers {
 
     /// Countdown text before an alt dial, e.g. "No answer on +91 90000 00101. Trying alt 1 of 2 (+91 90000 00201)".
     /// `afterNoAnswer` is false when the session is simply resuming on that number.
-    public static func notice(sequence: [String], nextIndex: Int, afterNoAnswer: Bool) -> String? {
+    public static func notice(sequence: [String], nextIndex: Int, afterNoAnswer: Bool, labels: [String] = []) -> String? {
         guard nextIndex > 0, sequence.indices.contains(nextIndex) else { return nil }
-        let trying = "\(label(index: nextIndex, count: sequence.count).replacingOccurrences(of: "Alt", with: "alt")) (\(PhoneNumber.display(sequence[nextIndex])))"
+        let name = labels.indices.contains(nextIndex) ? labels[nextIndex] : label(index: nextIndex, count: sequence.count)
+        let trying = "\(name.replacingOccurrences(of: "Alt", with: "alt").replacingOccurrences(of: "Main", with: "the main number")) (\(PhoneNumber.display(sequence[nextIndex])))"
         guard afterNoAnswer else { return "Next: \(trying)" }
         return "No answer on \(PhoneNumber.display(sequence[nextIndex - 1])). Trying \(trying)"
     }

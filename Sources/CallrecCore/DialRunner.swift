@@ -131,14 +131,18 @@ public final class DialRunner: ObservableObject {
         public var leadID: String
         public var index: Int
         public var numbers: [String]
-        public var label: String { AltNumbers.label(index: index, count: numbers.count) }
+        /// "Main" / "Alt 1 of 2" by the number's place on the lead, not its place in the (reorderable) sequence.
+        public var labels: [String] = []
+        public var label: String { labels.indices.contains(index) ? labels[index] : AltNumbers.label(index: index, count: numbers.count) }
         public var number: String { numbers[index] }
     }
 
     public var numberProgress: NumberProgress? {
         guard let plan = session.numberPlan, let seq = activeSequence, seq.leadID == plan.leadID,
               seq.numbers.indices.contains(plan.index) else { return nil }
-        return NumberProgress(leadID: plan.leadID, index: plan.index, numbers: seq.numbers)
+        let original = services.leads.leads.first { $0.id == plan.leadID }.map { AltNumbers.allNumbers(of: $0) } ?? seq.numbers
+        let labels = seq.numbers.map { n in AltNumbers.label(index: original.firstIndex(of: n) ?? 0, count: original.count) }
+        return NumberProgress(leadID: plan.leadID, index: plan.index, numbers: seq.numbers, labels: labels)
     }
 
     /// The lead in front of the user: the one on the line, else the one whose alt number is due, else the next in the queue.
@@ -151,7 +155,32 @@ public final class DialRunner: ObservableObject {
     /// Countdown text for a due alt number, e.g. "No answer on +91 … . Trying alt 1 of 2 (+91 …)".
     public func altNotice(for countdown: DialSession.Countdown) -> String? {
         guard countdown.altFallback, let p = numberProgress else { return nil }
-        return AltNumbers.notice(sequence: p.numbers, nextIndex: p.index, afterNoAnswer: countdown.afterNoAnswer)
+        return AltNumbers.notice(sequence: p.numbers, nextIndex: p.index, afterNoAnswer: countdown.afterNoAnswer, labels: p.labels)
+    }
+
+    /// True when picking which number to dial next is allowed (not while a call is placed, on, or wrapped up).
+    public var canChooseNumber: Bool {
+        switch session.phase {
+        case .idle, .stopped, .preflight, .countdown, .paused: return true
+        default: return false
+        }
+    }
+
+    /// Lead card: dial `number` next for `leadID`. Numbers already tried on this lead keep their place;
+    /// the chosen one goes next and the untried others follow as fallbacks. Only for the lead in front
+    /// of the user, and never while a call is being placed, on, or wrapped up (the session ignores it).
+    public func chooseNumber(_ number: String, for leadID: String) {
+        guard let item = queue.first(where: { $0.id == leadID }), item.status == .pending,
+              focus?.id == leadID || current == nil && nextUp?.id == leadID else { return }
+        let full = AltNumbers.sequence(for: item.lead, dnc: dnc, enabled: true)
+        guard full.contains(number) else { return }
+        var tried: [String] = []
+        if let p = numberProgress, p.leadID == leadID { tried = Array(p.numbers.prefix(p.index)) }
+        guard !tried.contains(number) else { return }
+        let order = tried + [number] + full.filter { $0 != number && !tried.contains($0) }
+        activeSequence = (leadID, order)
+        perform(session.handle(.chooseNumber(leadID: leadID, count: order.count, index: tried.count)))
+        objectWillChange.send()
     }
 
     /// Countdown button: give up on the lead's remaining numbers and move to the next lead.

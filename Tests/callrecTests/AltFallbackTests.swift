@@ -87,8 +87,9 @@ private func callLasting(_ s: inout DialSession, from now: Date, seconds: Int, g
     let e = callLasting(&s, from: t0, seconds: 60)
     equal(e, [.recordCallEnded(leadID: lead, seconds: 60, connected: true)], "main.recorded")
     if case .wrapUp = s.phase {} else { Issue.record("main.wrapUp: \(s.phase)") }
-    expect(s.numberPlan == nil, "main.planCleared")
+    expect(s.numberPlan != nil, "main.planKeptIntoWrapUp")   // a "no connect" there would try the alt
     s.handle(.wrapUpSaved(now: later(100), outcome: "pitched", notes: "", doNotCall: false, gap: 60, minGap: 45))
+    expect(s.numberPlan == nil, "main.planClearedOnPickedUp")
     // The next dial is a different lead, with its own plan.
     _ = s.handle(.tick(now: later(160)))
     _ = s.handle(.dialChecked(now: later(160), nextLeadID: other, decision: .allowed, numberCount: 1))
@@ -114,8 +115,10 @@ private func callLasting(_ s: inout DialSession, from now: Date, seconds: Int, g
     let ended = callLasting(&s, from: later(111), seconds: 90)
     equal(ended, [.recordCallEnded(leadID: lead, seconds: 90, connected: true)], "alt1.connected")
     if case .wrapUp(let w) = s.phase { equal(w.leadID, lead, "alt1.wrapUpForTheLead") } else { Issue.record("alt1.wrapUp: \(s.phase)") }
-    expect(s.numberPlan == nil, "alt1.planCleared")
+    equal(s.numberPlan?.index, 1, "alt1.planKeptIntoWrapUp")
     equal(s.dials, 2, "alt1.twoDials")
+    _ = s.handle(.wrapUpSaved(now: later(300), outcome: "pitched", notes: "", doNotCall: false, gap: 60, minGap: 45))
+    expect(s.numberPlan == nil, "alt1.planClearedOnPickedUp")
 }
 
 @Test func aShortConnectedCallCountsAsNotConnected() {
@@ -591,4 +594,97 @@ private struct Rig {
     expect(r.dialLog.contains { $0.kind == .result && $0.result == .notPlaced && $0.key == "9000000001" }, "npRun.loggedNotPlaced")
     r.resume(); rig.nextDial()
     equal(rig.dialer.dialed, ["9000000001", "9000000001"], "npRun.retriesTheSameNumber")
+}
+
+// MARK: - 2026-10-29: the wrap-up outcome drives the fallback; the user can pick the number
+
+// The recorder starts at ringing, so a ring-out reads as a "connected" 20-40 s call and the
+// fallback never fired on a real list. The person's "no connect" in the wrap-up is the truth:
+// it moves to the lead's next number. Anything else means someone picked up: no alt is dialled.
+
+@Test func wrapUpNoConnectMovesToTheNextNumberOfTheSameLead() {
+    var s = started()
+    dialed(&s, at: t0)
+    _ = callLasting(&s, from: t0, seconds: 30)
+    let e = s.handle(.wrapUpSaved(now: later(100), outcome: "no connect", notes: "", doNotCall: false, gap: 60, minGap: 45))
+    equal(e, [.saveWrapUp(leadID: lead, outcome: "no connect", notes: ""), .setLeadStatus(leadID: lead, status: .pending)],
+          "wrapNC.effects")
+    equal(s.numberPlan, DialSession.NumberPlan(leadID: lead, count: 3, index: 1), "wrapNC.nextNumber")
+    equal(s.phase, .countdown(.init(until: later(160), minGapUntil: later(145), blocked: nil, altFallback: true, afterNoAnswer: true)),
+          "wrapNC.altCountdown")
+}
+
+@Test func wrapUpPickedUpNeverDialsTheAlts() {
+    var s = started()
+    dialed(&s, at: t0)
+    _ = callLasting(&s, from: t0, seconds: 30)
+    let e = s.handle(.wrapUpSaved(now: later(100), outcome: "gatekeeper", notes: "", doNotCall: false, gap: 60, minGap: 45))
+    equal(e, [.saveWrapUp(leadID: lead, outcome: "gatekeeper", notes: "")], "wrapPU.effects")
+    expect(s.numberPlan == nil, "wrapPU.planCleared")
+    equal(s.phase, .countdown(.init(until: later(160), minGapUntil: later(145), blocked: nil)), "wrapPU.nextLead")
+}
+
+@Test func wrapUpNoConnectOnTheLastNumberOrWithDoNotCallEndsTheLead() {
+    var s = started()
+    dialed(&s, at: t0, count: 1)
+    _ = callLasting(&s, from: t0, seconds: 30)
+    let single = s.handle(.wrapUpSaved(now: later(100), outcome: "no connect", notes: "", doNotCall: false, gap: 60, minGap: 45))
+    equal(single, [.saveWrapUp(leadID: lead, outcome: "no connect", notes: "")], "wrapLast.single")
+    expect(s.numberPlan == nil, "wrapLast.planCleared")
+
+    var d = started()
+    dialed(&d, at: t0)
+    _ = callLasting(&d, from: t0, seconds: 30)
+    let dnc = d.handle(.wrapUpSaved(now: later(100), outcome: "no connect", notes: "", doNotCall: true, gap: 60, minGap: 45))
+    expect(!dnc.contains(.setLeadStatus(leadID: lead, status: .pending)), "wrapDNC.notReopened")
+    expect(d.numberPlan == nil, "wrapDNC.planCleared")
+}
+
+@Test func chooseNumberSetsWhichNumberIsDialledNext() {
+    var s = DialSession()
+    _ = s.handle(.chooseNumber(leadID: lead, count: 3, index: 0))
+    s.handle(.start)
+    equal(s.numberPlan, DialSession.NumberPlan(leadID: lead, count: 3, index: 0), "choose.survivesStart")
+    _ = s.handle(.preflightPassed(now: t0))
+    _ = s.handle(.dialChecked(now: t0, nextLeadID: lead, decision: .allowed, numberCount: 3))
+    _ = s.handle(.dialPlaced(now: later(1)))
+    _ = s.handle(.chooseNumber(leadID: lead, count: 3, index: 2))
+    equal(s.numberPlan?.index, 0, "choose.ignoredDuringACall")
+}
+
+@MainActor @Test func runnerWrapUpNoConnectDialsTheAltThenPickedUpMovesOn() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    await rig.begin()
+    await rig.call(seconds: 30)            // rang 30 s: the recorder calls it connected
+    r.saveWrapUp(outcome: "no connect", notes: "", doNotCall: false)
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .pending, "runNC.pending")
+    rig.nextDial()
+    equal(rig.dialer.dialed, ["9000000001", "9000000201"], "runNC.altDialled")
+    await rig.call(seconds: 60)
+    r.saveWrapUp(outcome: "pitched", notes: "", doNotCall: false)
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .called, "runNC.called")
+    rig.nextDial()
+    equal(rig.dialer.dialed, ["9000000001", "9000000201", "9000000002"], "runNC.alt2NeverDialled")
+}
+
+@MainActor @Test func runnerChosenNumberGoesFirstAndTheOthersFollow() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.chooseNumber("9000000202", for: "9000000001")
+    equal(r.numberProgress?.label ?? "", "Alt 2 of 2", "pick.labelBeforeStart")
+    await rig.begin()
+    equal(rig.dialer.dialed, ["9000000202"], "pick.chosenFirst")
+    await rig.call(seconds: 30)
+    r.saveWrapUp(outcome: "no connect", notes: "", doNotCall: false)
+    rig.nextDial()
+    equal(rig.dialer.dialed, ["9000000202", "9000000001"], "pick.thenMain")
+    equal(r.numberProgress?.label ?? "", "Main", "pick.labelMain")
+    // Switch the next number mid-lead: alt 1 is the only one left.
+    await rig.call(seconds: 30)
+    r.saveWrapUp(outcome: "no connect", notes: "", doNotCall: false)
+    rig.nextDial()
+    equal(rig.dialer.dialed, ["9000000202", "9000000001", "9000000201"], "pick.thenAlt1")
 }

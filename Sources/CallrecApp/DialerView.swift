@@ -143,7 +143,8 @@ private struct DialerSession: View {
                         let progress = runner.numberProgress.flatMap { $0.leadID == item.id ? $0 : nil }
                         LeadHero(item: item, isCalling: runner.current != nil, isTest: runner.isTestLead(item.lead),
                                  progress: progress,
-                                 calledBefore: runner.snapshot?.lastCallByKey[progress?.number ?? item.lead.number])
+                                 calledBefore: runner.snapshot?.lastCallByKey[progress?.number ?? item.lead.number],
+                                 onChoose: runner.canChooseNumber ? { runner.chooseNumber($0, for: item.id) } : nil)
                     }
                     QueueSection(runner: runner)
                 }

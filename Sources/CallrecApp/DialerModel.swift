@@ -33,7 +33,10 @@ final class DialerModel: ObservableObject {
             // and the previous list stays loaded because nothing below runs on a throw.
             let result = try LeadImporter.load(source, caller: config.dialerCaller, repeatable: config.dialRules.testKeys)
             var csv = source
-            if copy, source.deletingLastPathComponent().standardizedFileURL != DialerPaths.listsDir.standardizedFileURL {
+            if copy, source.deletingLastPathComponent().standardizedFileURL != DialerPaths.listsDir.standardizedFileURL,
+               let same = ListCopies.existingCopy(of: source, in: DialerPaths.listsDir) {
+                csv = same   // already imported: keep its progress instead of starting a fresh copy
+            } else if copy, source.deletingLastPathComponent().standardizedFileURL != DialerPaths.listsDir.standardizedFileURL {
                 try Paths.ensureDir(DialerPaths.listsDir)
                 csv = Self.uniqueDestination(for: source)
                 try FileManager.default.copyItem(at: source, to: csv)
@@ -51,9 +54,21 @@ final class DialerModel: ObservableObject {
             listPath = csv
             error = nil
             runner = DialRunner(Self.services(dialer: dialer, config: config, name: name, leads: result, store: store))
+            rememberList(csv)
         } catch {
             self.error = error.localizedDescription
             logError("dialer: could not open list \(source.lastPathComponent): \(error.localizedDescription)")
+        }
+    }
+
+    /// The list that opens next time the app starts: whatever was loaded last.
+    private func rememberList(_ csv: URL) {
+        var c = Config.load()
+        guard c.dialerListPath != csv.path else { return }
+        c.dialerListPath = csv.path
+        do { try c.save() } catch {
+            self.error = "The list is loaded, but could not be remembered for next launch: \(error.localizedDescription)"
+            logError("dialer: could not save dialerListPath: \(error.localizedDescription)")
         }
     }
 

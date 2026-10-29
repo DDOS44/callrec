@@ -92,6 +92,9 @@ public enum DialEvent: Equatable, Sendable {
     case doNotCallAgain
     /// Countdown before an alt number: give up on the lead's remaining numbers (status no answer).
     case skipRemainingNumbers
+    /// The user picked which of the lead's numbers to dial next (the runner reorders the sequence so
+    /// the chosen one is at `index`). Ignored while a call is being placed, on, or wrapped up.
+    case chooseNumber(leadID: String, count: Int, index: Int)
     case pauseAfterThisCall
     case pause
     case resume(now: Date, gap: TimeInterval, minGap: TimeInterval)
@@ -249,6 +252,13 @@ public struct DialSession: Equatable, Sendable {
             c.altFallback = false; c.afterNoAnswer = false
             phase = .countdown(c)
             return [.setLeadStatus(leadID: plan.leadID, status: .noAnswer)]
+        case .chooseNumber(let id, let count, let index):
+            switch phase {
+            case .idle, .stopped, .preflight, .countdown, .paused:
+                numberPlan = NumberPlan(leadID: id, count: max(count, 1), index: min(max(index, 0), max(count, 1) - 1))
+            default: break
+            }
+            return []
         case .pauseAfterThisCall: return request(.pause(.afterThisCall))
         case .pause: return request(.pause(.user))
         case .resume(let now, let gap, let minGap): return resume(now, gap, minGap)
@@ -277,7 +287,9 @@ public struct DialSession: Equatable, Sendable {
     private mutating func start() -> [DialEffect] {
         switch phase {
         case .idle, .stopped:
+            let chosen = numberPlan   // a number picked before Start stays picked
             self = DialSession(notPlacedTimeout: notPlacedTimeout, shortCallSeconds: shortCallSeconds)
+            numberPlan = chosen
             phase = .preflight
         default: break
         }
@@ -406,7 +418,7 @@ public struct DialSession: Equatable, Sendable {
            let effects = unanswered(id, seconds: seconds, connected: true, now: now, gap: gap, minGap: minGap) {
             return effects
         }
-        numberPlan = nil
+        // The plan is kept into the wrap-up: a "no connect" there moves to the lead's next number.
         phase = .wrapUp(WrapUp(leadID: id, seconds: seconds, connected: true))
         return [.recordCallEnded(leadID: id, seconds: seconds, connected: true)]
     }
@@ -426,7 +438,6 @@ public struct DialSession: Equatable, Sendable {
                let effects = unanswered(id, seconds: seconds, connected: false, now: now, gap: gap, minGap: minGap) {
                 return effects
             }
-            numberPlan = nil
             phase = .wrapUp(WrapUp(leadID: id, seconds: seconds, connected: false))
             return [.recordCallEnded(leadID: id, seconds: seconds, connected: false)]
         }
@@ -438,6 +449,19 @@ public struct DialSession: Equatable, Sendable {
         var effects: [DialEffect] = [.saveWrapUp(leadID: w.leadID, outcome: outcome, notes: notes)]
         if dnc { effects += [.addToDoNotCall(leadID: w.leadID), .setLeadStatus(leadID: w.leadID, status: .doNotCall)] }
         if w.recovered { phase = .idle; return effects }
+        // The recorder starts at ringing, so a ring-out arrives here as a "connected" call. The
+        // person's "no connect" is the truth: try the lead's next number. Anything else means
+        // someone picked up, and the lead's other numbers are never dialled.
+        let noConnect = outcome.trimmingCharacters(in: .whitespaces).lowercased() == "no connect"
+        if noConnect, !dnc, let plan = numberPlan, plan.leadID == w.leadID,
+           let next = AltNumbers.advance(from: plan.index, count: plan.count) {
+            numberPlan?.index = next
+            effects.append(.setLeadStatus(leadID: w.leadID, status: .pending))
+            phase = .countdown(Countdown(until: now.addingTimeInterval(gap), minGapUntil: now.addingTimeInterval(minGap),
+                                         blocked: nil, altFallback: true, afterNoAnswer: true))
+            applyHaltIfAny()
+            return effects
+        }
         numberPlan = nil
         phase = .countdown(Countdown(until: now.addingTimeInterval(gap), minGapUntil: now.addingTimeInterval(minGap), blocked: nil))
         applyHaltIfAny()

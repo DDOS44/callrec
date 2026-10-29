@@ -223,6 +223,8 @@ struct LeadHero: View {
     var progress: DialRunner.NumberProgress?
     /// Last time this number appears in call history (either direction), if ever.
     var calledBefore: Date?
+    /// Click a number to dial it next; nil while a call is being placed or is on.
+    var onChoose: ((String) -> Void)?
 
     @State private var copied = false
 
@@ -280,20 +282,33 @@ struct LeadHero: View {
         return progress.map { "\(base) · \($0.label.uppercased())" } ?? base
     }
 
-    /// Every number of the lead, the one in play highlighted. Each is also copyable.
+    /// Every number of the lead, the one in play highlighted. Click one to dial it next (the others
+    /// stay as fallbacks if it does not connect). Each is also copyable.
     private func numberList(_ lead: Lead) -> some View {
         let all = [lead.number] + lead.altNumbers.filter { $0 != lead.number }
         return VStack(alignment: .leading, spacing: 2) {
             ForEach(Array(all.enumerated()), id: \.element) { i, n in
                 HStack(spacing: 8) {
-                    Text(i == 0 ? "Main" : "Alt \(i)").font(.caption).foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
-                    Text(PhoneNumber.display(n)).font(.callout.monospacedDigit()).textSelection(.enabled)
+                    Button { onChoose?(n) } label: {
+                        HStack(spacing: 8) {
+                            Text(i == 0 ? "Main" : "Alt \(i)").font(.caption).foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
+                            Text(PhoneNumber.display(n)).font(.callout.monospacedDigit())
+                            if n == active { Image(systemName: "phone.fill").font(.caption).foregroundStyle(Color.accentColor) }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(onChoose == nil || n == active)
+                    .help(n == active ? "Dialled next" : "Dial this number next")
                     Button { copy(n) } label: { Image(systemName: "doc.on.doc").font(.caption) }
                         .buttonStyle(.borderless).help("Copy this number")
-                    if n == active { Image(systemName: "phone.fill").font(.caption).foregroundStyle(Color.accentColor) }
                 }
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .background(n == active ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            }
+            if onChoose != nil {
+                Text("Click a number to dial it next. If it doesn't connect, the others are tried after it.")
+                    .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 8)
             }
         }
     }
