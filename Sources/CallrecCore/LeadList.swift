@@ -207,7 +207,9 @@ public enum LeadImporter {
                             caller: cell(row, .caller), order: order)
             lead.repeatIndex = occurrences[number] ?? 1
             lead.altNumbers = alts
-            lead.email = cell(row, .email).trimmingCharacters(in: .whitespacesAndNewlines)
+            // A cell can hold several addresses ("a@x.in / b@x.in"): keep the first one that looks valid.
+            lead.email = cell(row, .email).split(whereSeparator: { "/,;| ".contains($0) })
+                .map(String.init).first(where: BookingEmail.isValid) ?? ""
             out.leads.append(lead)
         }
         if altFragments > 0 {

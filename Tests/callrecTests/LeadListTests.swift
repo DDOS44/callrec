@@ -249,3 +249,13 @@ private func stateURL() -> URL {
         expect(m.contains("company") && m.contains("foo") && m.contains("Bar Baz"), "error.names found columns", m)
     }
 }
+
+@Test func emailCellWithSeveralAddressesKeepsTheFirstValidOne() throws {
+    let r = try LeadImporter.parse("""
+    company,phone,email
+    Fake A,9000000101,abhishek@fakeco.in / hrd@fakeco.in
+    Fake B,9000000102,not an email
+    """)
+    #expect(r.leads[0].email == "abhishek@fakeco.in")
+    #expect(r.leads[1].email == "")
+}
