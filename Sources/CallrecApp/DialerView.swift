@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct DialerListColumn: View {
     @EnvironmentObject var dialer: DialerModel
     @State private var picking = false
+    @State private var confirmRemove = false
 
     var body: some View {
         // A ScrollView, not a bare VStack with a Spacer: the column can never be asked to lay out
@@ -23,6 +24,27 @@ struct DialerListColumn: View {
                 Button { picking = true } label: { Label("Import list…", systemImage: "square.and.arrow.down") }
                     .disabled(dialer.sessionRunning)
                 if let e = dialer.error { ImportErrorBanner(message: e) { dialer.error = nil } }
+                if dialer.imported != nil {
+                    Divider()
+                    Text("Contacts").font(.headline)
+                    Button { dialer.saveLeadsToContacts() } label: { Label("Save leads to Contacts", systemImage: "person.crop.circle.badge.plus") }
+                        .disabled(dialer.contactsBusy)
+                        .help("Adds this list's leads to the 'callrec leads' group, named by agency, so callbacks show by name. Imports do this automatically.")
+                    if confirmRemove {
+                        HStack {
+                            Button("Delete them", role: .destructive) { confirmRemove = false; dialer.removeLeadContacts() }
+                            Button("Cancel") { confirmRemove = false }
+                        }
+                        Text("Deletes every contact in the 'callrec leads' group. Your own contacts are never in it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Button { confirmRemove = true } label: { Label("Remove callrec contacts…", systemImage: "person.crop.circle.badge.minus") }
+                            .disabled(dialer.contactsBusy)
+                    }
+                    if let note = dialer.contactsNote {
+                        Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -77,6 +99,7 @@ private struct ListSummary: View {
             row("No answer", "phone.down.fill", .secondary, "\(counts[.noAnswer] ?? 0)")
             row("Do not call", "nosign", .red, "\(counts[.doNotCall] ?? 0)")
             row("Skipped", "forward.fill", .orange, "\(counts[.skipped] ?? 0)")
+            row("Retry due", "arrow.clockwise", .orange, "\(runner.retryDue.count)")
             row("Picked up", "person.wave.2.fill", .blue, runner.pickupRate.text)
             Divider()
             row("Dials today", "phone.arrow.up.right", .secondary,
@@ -165,9 +188,17 @@ private struct DialerSession: View {
                             }
                         }
                     }
+                    if !runner.callbacks.isEmpty { CallbacksPanel(runner: runner) }
                     QueueSection(runner: runner)
                 }
                 .padding(24)
+                // Callbacks: re-read call history now and every 2 minutes while the dialer is open.
+                .task(id: runner.services.listName) {
+                    while !Task.isCancelled {
+                        await runner.refreshCallbacks()
+                        try? await Task.sleep(for: .seconds(120))   // swiftlint:disable:this no_try_optional
+                    }
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }

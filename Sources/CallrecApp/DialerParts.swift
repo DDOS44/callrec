@@ -55,6 +55,12 @@ struct SessionHeader: View {
         HStack(spacing: 8) {
             switch phase {
             case .idle, .stopped:
+                Picker("Dial", selection: Binding(get: { runner.mode }, set: { runner.setMode($0) })) {
+                    Text("New leads").tag(DialRunner.Mode.fresh)
+                    Text("Retry no-connects (\(runner.retryDue.count) due)").tag(DialRunner.Mode.retries)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .help("Retry no-connects dials only leads whose retry is due: 4 tries in all, at most one a day, spaced 1, 2 then 4 calling days, each at a different part of the day")
                 Button { runner.start() } label: { Label("Start session", systemImage: "play.fill").frame(minWidth: 120) }
                     .buttonStyle(.borderedProminent)
                     .disabled(runner.nextUp == nil)
@@ -459,15 +465,18 @@ struct QueueSection: View {
         let focusID = runner.focus?.id
         let altsOn = runner.services.config.tryAltNumbers
         let pending = LeadQueue.counts(runner.queue)[.pending] ?? 0
+        let retrying = runner.mode == .retries
+        let items = retrying ? retryList : runner.queue
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Queue").font(.headline)
-                Text("\(pending) left of \(runner.queue.count)").font(.caption).foregroundStyle(.secondary)
+                Text(retrying ? "Retry no-connects" : "Queue").font(.headline)
+                Text(retrying ? retrySummary : "\(pending) left of \(runner.queue.count)").font(.caption).foregroundStyle(.secondary)
             }
             LazyVStack(alignment: .leading, spacing: 2) {
-                ForEach(runner.queue) { item in
+                ForEach(items) { item in
                     QueueRow(item: item, isCurrent: item.id == focusID,
-                             altBadge: altsOn ? AltNumbers.queueBadge(altCount: AltNumbers.sequence(for: item.lead).count - 1) : nil)
+                             altBadge: altsOn ? AltNumbers.queueBadge(altCount: AltNumbers.sequence(for: item.lead).count - 1) : nil,
+                             detail: retryDetail(item))
                         .contentShape(Rectangle())
                         .onTapGesture { runner.callNext(item.id) }
                         .contextMenu {
@@ -485,12 +494,49 @@ struct QueueSection: View {
             }
         }
     }
+
+    /// Due first (as the session will dial them), then the ones waiting, then the given-up ones.
+    private var retryList: [QueueItem] {
+        let due = runner.retryDue
+        let dueIDs = Set(due.map(\.id))
+        let rest = runner.queue.filter { $0.status == .noAnswer && !dueIDs.contains($0.id) }
+            .sorted { rank(runner.retryState(for: $0.id)) < rank(runner.retryState(for: $1.id)) }
+        return due + rest
+    }
+
+    private func rank(_ s: RetryPlan.State) -> Int { if case .waiting = s { return 0 }; return 1 }
+
+    private var retrySummary: String {
+        let states = runner.queue.filter { $0.status == .noAnswer }.map { runner.retryState(for: $0.id) }
+        let due = states.filter(\.isDue).count
+        let waiting = states.filter { if case .waiting = $0 { return true }; return false }.count
+        let gaveUp = states.filter { if case .exhausted = $0 { return true }; return false }.count
+        return "\(due) due now · \(waiting) waiting · \(gaveUp) gave up"
+    }
+
+    private func retryDetail(_ item: QueueItem) -> String? {
+        guard item.status == .noAnswer else { return nil }
+        let max = RetryPlan.Schedule().maxTries
+        switch runner.retryState(for: item.id) {
+        case .none: return nil
+        case .due(let t, let last, let best):
+            return "Try \(t + 1) of \(max) due · best \(best.short) · last \(Self.when.string(from: last))"
+        case .waiting(let until, let t, let last, let best):
+            return "Try \(t + 1) of \(max) from \(Self.day.string(from: until)) · best \(best.short) · last \(Self.when.string(from: last))"
+        case .exhausted(let t, let last):
+            return "Gave up after \(t) tries · last \(Self.when.string(from: last))"
+        }
+    }
+
+    private static let when: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE d MMM, h:mm a"; return f }()
+    private static let day: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE d MMM"; return f }()
 }
 
 private struct QueueRow: View {
     let item: QueueItem
     let isCurrent: Bool
     var altBadge: String?
+    var detail: String?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -499,6 +545,7 @@ private struct QueueRow: View {
                 Text(item.lead.title).font(.body.weight(isCurrent ? .semibold : .regular)).lineLimit(1)
                 let sub = [item.lead.city, item.lead.owner].filter { !$0.isEmpty }.joined(separator: " · ")
                 if !sub.isEmpty { Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                if let detail { Text(detail).font(.caption).foregroundStyle(.orange).lineLimit(1) }
             }
             Spacer(minLength: 8)
             if let altBadge { Text(altBadge).font(.caption2).foregroundStyle(.secondary) }
@@ -831,4 +878,40 @@ struct ViewingBanner: View {
         let outcome = item.record.outcome.isEmpty ? "" : " · \(item.record.outcome)"
         return "\(status)\(outcome). Nothing changes unless you press Call again."
     }
+}
+
+// MARK: - Callbacks
+
+/// Leads who called us in the last 7 days. Talked: already moved out of no-answer. Missed: one click
+/// makes them the next dial, on the number that called (a returned call skips the 7-day rule once).
+struct CallbacksPanel: View {
+    @ObservedObject var runner: DialRunner
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Callbacks", systemImage: "phone.arrow.down.left").font(.headline)
+            ForEach(runner.callbacks.prefix(8)) { cb in
+                let title = runner.queue.first { $0.id == cb.leadID }?.lead.title ?? PhoneNumber.display(cb.number)
+                HStack(spacing: 10) {
+                    Image(systemName: cb.missed ? "phone.down.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(cb.missed ? .red : .green)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title).font(.body.weight(.medium)).lineLimit(1)
+                        Text(cb.missed ? "Missed call · \(Self.when.string(from: cb.date))"
+                                       : "Called you · talked \(cb.seconds / 60)m \(cb.seconds % 60)s · \(Self.when.string(from: cb.date)) · moved to Called")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if cb.missed {
+                        Button("Call back") { runner.callBack(cb) }
+                            .disabled(!runner.canChooseNumber)
+                            .help("Make them the next dial, on the number that called you")
+                    }
+                }
+            }
+        }
+        .card()
+    }
+
+    private static let when: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE d MMM, h:mm a"; return f }()
 }

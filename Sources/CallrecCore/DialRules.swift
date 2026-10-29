@@ -16,6 +16,10 @@ public struct DialRules: Equatable, Sendable {
     /// Normalised keys of the user's own test numbers (see Config.testNumbers).
     public var testKeys: Set<String> = []
     public var testGapMin: TimeInterval = 10
+    /// Numbers of no-connect leads whose retry is due (RetryPlan), and of leads returning a missed call
+    /// to us. They skip ONLY the 7-day no-redial rule; hours, caps, gap and do-not-call still apply.
+    /// Set by the runner at each dial check, never from config.
+    public var retryKeys: Set<String> = []
     public var dncPausePerDay = 3
     public var failurePauseCount = 3
     public var shortCallSeconds = 5

@@ -135,7 +135,9 @@ public enum DialPolicy {
         // (active call, DNC, SIM confirmation, pauses, stops) still applies.
         let isTest = rules.testKeys.contains(key)
         if !isTest {
-            if let until = cooldownEnd(key: key, now: now, rules: rules, log: log, history: history) { return .blocked(.cooldown(until: until)) }
+            // A due no-connect retry (or a missed call being returned) has its own schedule: RetryPlan.
+            if !rules.retryKeys.contains(key),
+               let until = cooldownEnd(key: key, now: now, rules: rules, log: log, history: history) { return .blocked(.cooldown(until: until)) }
             if let block = hoursBlock(now: now, rules: rules, calendar: calendar) { return .blocked(block) }
             if let block = capBlock(now: now, rules: rules, log: log, calendar: calendar) { return .blocked(block) }
         }

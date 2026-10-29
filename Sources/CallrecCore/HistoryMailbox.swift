@@ -24,8 +24,10 @@ public enum HistoryMailbox {
         public var epoch: Double
         public var numberKey: String
         public var seconds: Int
-        public init(epoch: Double, numberKey: String, seconds: Int) {
-            self.epoch = epoch; self.numberKey = numberKey; self.seconds = seconds
+        /// true = we called them, false = they called us; nil when the database does not say.
+        public var originated: Bool?
+        public init(epoch: Double, numberKey: String, seconds: Int, originated: Bool? = nil) {
+            self.epoch = epoch; self.numberKey = numberKey; self.seconds = seconds; self.originated = originated
         }
     }
 
@@ -187,9 +189,11 @@ extension CallHistory {
     /// alike), each as date, last-10-digit number and seconds. No names.
     public static func mailboxRows(since epoch: Double) throws -> [HistoryMailbox.Row] {
         let apple = epoch - 978_307_200
-        let sql = "select coalesce(ZADDRESS,''), ZDATE, cast(coalesce(ZDURATION,0) as int) from ZCALLRECORD "
-            + "where ZDATE >= \(apple) order by ZDATE desc limit 1000;"
-        let r = try query(sql)
+        let tail = " from ZCALLRECORD where ZDATE >= \(apple) order by ZDATE desc limit 1000;"
+        // Direction (ZORIGINATED) tells a callback from our own dial; an older database without the
+        // column falls back to the query without it (direction then unknown).
+        var r = try query("select coalesce(ZADDRESS,''), ZDATE, cast(coalesce(ZDURATION,0) as int), coalesce(ZORIGINATED,-1)" + tail)
+        if r.status != 0 { r = try query("select coalesce(ZADDRESS,''), ZDATE, cast(coalesce(ZDURATION,0) as int), -1" + tail) }
         guard r.status == 0 else {
             throw NSError(domain: "callrec", code: 42, userInfo: [NSLocalizedDescriptionKey:
                 "call history not readable: \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))"])
@@ -197,7 +201,9 @@ extension CallHistory {
         return r.stdout.split(separator: "\n").compactMap { line in
             let f = line.components(separatedBy: "\u{1}")
             guard f.count >= 3, let key = PhoneNumber.key(f[0]), let apple = Double(f[1]) else { return nil }
-            return HistoryMailbox.Row(epoch: apple + 978_307_200, numberKey: key, seconds: Int(f[2]) ?? 0)
+            let dir = f.count >= 4 ? Int(f[3].trimmingCharacters(in: .whitespacesAndNewlines)) : nil
+            return HistoryMailbox.Row(epoch: apple + 978_307_200, numberKey: key, seconds: Int(f[2]) ?? 0,
+                                      originated: dir == 1 ? true : (dir == 0 ? false : nil))
         }
     }
 }

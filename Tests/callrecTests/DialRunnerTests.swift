@@ -20,7 +20,8 @@ private struct Rig {
     let runner: DialRunner
 
     init(logURL: URL? = nil, snapshot: HistorySnapshot? = nil, recordings: [(day: String, file: String)] = [],
-         booking: String = "", open: @escaping (URL) -> Bool = { _ in false }, calcom: CalCom? = nil) throws {
+         booking: String = "", open: @escaping (URL) -> Bool = { _ in false }, calcom: CalCom? = nil,
+         csv: String? = nil) throws {
         if let snapshot { box.snapshot = snapshot }
         dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-runner-\(UUID())")
         try Paths.ensureDir(dir)
@@ -29,7 +30,7 @@ private struct Rig {
             try Paths.ensureDir(folder)
             FileManager.default.createFile(atPath: folder.appendingPathComponent(rec.file).path, contents: Data())
         }
-        let leads = try LeadImporter.parse("""
+        let leads = try LeadImporter.parse(csv ?? """
         company,phone,confidence
         Fake One,9000000001,high
         Fake Two,9000000002,medium
@@ -540,4 +541,87 @@ private func fakeCal(status: Int, body: String) -> CalCom {
     let msg = await rig.runner.bookMeeting(leadID: "9000000001", start: DialFixture.at(30, 9), name: "A", email: "a@fake.in") ?? ""
     equal(msg, "Cal.com: slot taken", "calFail.message")
     expect(rig.runner.queue.first { $0.id == "9000000001" }?.record.bookingUid == nil, "calFail.nothingSaved")
+}
+
+// MARK: - No-connect retries and callbacks (2026-10-29)
+
+@MainActor private func callAndWrap(_ rig: Rig, outcome: String) async {
+    let r = rig.runner
+    r.tick(); rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(2); r.tick()
+    rig.advance(30); rig.box.recording = false; r.tick(); await rig.settle()
+    r.saveWrapUp(outcome: outcome, notes: "", doNotCall: false)
+}
+
+@MainActor @Test func retryModeDialsADueNoConnectDespiteTheSevenDayRule() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()     // Wed 7 Oct: lead 1
+    await callAndWrap(rig, outcome: "no connect")
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .noAnswer, "retry.noAnswer")
+    r.stop(); await rig.settle()
+    expect(!r.retryState(for: "9000000001").isDue, "retry.notDueSameDay")
+    rig.box.now = DialFixture.at(8, 11)                                          // Thu: one calling day later
+    expect(r.retryState(for: "9000000001").isDue, "retry.dueNextDay")
+    equal(r.nextUp?.id ?? "", "9000000002", "fresh.modeStillNewLeads")
+    r.setMode(.retries)
+    equal(r.retryDue.map(\.id), ["9000000001"], "retry.list")
+    equal(r.nextUp?.id ?? "", "9000000001", "retry.next")
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    equal(rig.dialer.dialed, ["9000000001", "9000000001"], "retry.dialledAgainInsideSevenDays")
+}
+
+@MainActor @Test func aCallbackWeTalkedOnTakesTheLeadOutOfNoAnswer() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    await callAndWrap(rig, outcome: "no connect")
+    r.stop(); await rig.settle()
+    rig.box.snapshot = HistorySnapshot(rows: [
+        HistoryCall(key: "9000000001", date: rig.box.now.addingTimeInterval(600), seconds: 120, originated: false)],
+        detection: .unavailable(reason: "fixture"))
+    rig.advance(900)
+    await r.refreshCallbacks()
+    equal(r.callbacks.map(\.leadID), ["9000000001"], "cb.found")
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .called, "cb.outOfNoAnswer")
+}
+
+@MainActor @Test func callingBackAMissedCallDialsTheNumberThatCalled() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    await callAndWrap(rig, outcome: "no connect")                                // lead 1 dialled: 7-day rule now
+    r.stop(); await rig.settle()
+    rig.box.snapshot = HistorySnapshot(rows: [
+        HistoryCall(key: "9000000001", date: rig.box.now.addingTimeInterval(300), seconds: 0, originated: false)],
+        detection: .unavailable(reason: "fixture"))
+    rig.advance(600)
+    await r.refreshCallbacks()
+    let missed = try #require(r.callbacks.first)
+    expect(missed.missed, "missed.flag")
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .noAnswer, "missed.statusUnchanged")
+    r.callBack(missed)
+    equal(r.nextUp?.id ?? "", "9000000001", "missed.next")
+    rig.advance(200)
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    equal(rig.dialer.dialed, ["9000000001", "9000000001"], "missed.dialledDespiteCooldown")
+}
+
+@MainActor @Test func aChosenNumberOnADueRetryIsTheOneDialled() async throws {
+    let leadsCSV = "company,phone,alt_phone,confidence\nFake One,9000000001,9000000201,high\nFake Two,9000000002,,medium\n"
+    let rig = try Rig(csv: leadsCSV)
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    await callAndWrap(rig, outcome: "no connect")       // main
+    rig.advance(130); r.tick()
+    await callAndWrap(rig, outcome: "no connect")       // alt: lead now no answer
+    r.stop(); await rig.settle()
+    rig.box.now = DialFixture.at(8, 11)
+    r.setMode(.retries)
+    r.chooseNumber("9000000201", for: "9000000001")
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    equal(rig.dialer.dialed.last ?? "", "9000000201", "pickRetry.altFirst")
 }

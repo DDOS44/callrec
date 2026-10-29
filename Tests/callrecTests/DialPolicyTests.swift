@@ -400,3 +400,19 @@ private typealias F = DialFixture
     expect(F.decide("9000000002", now: now, rules: r, log: testDials) == .allowed,
            "policy.testDialsInAnyFormatDoNotEatTheCap")
 }
+
+// 2026-10-29: a due no-connect retry skips the 7-day rule, and nothing else.
+@Test func aDueRetrySkipsOnlyTheCooldown() {
+    var r = DialRules(); r.retryKeys = ["9000000001"]
+    let called = [F.attempt(F.at(6, 12), key: "9000000001")]
+    equal(F.decide(now: F.at(7, 12), rules: r, log: called), .allowed, "retry.cooldownSkipped")
+    if case .blocked(.outsideCallingHours) = F.decide(now: F.at(7, 20), rules: r, log: called) {} else { Issue.record("retry.hoursStillApply") }
+    r.dailyCap = 1
+    if case .blocked(.dailyCapReached) = F.decide(now: F.at(7, 12), rules: r, log: [F.attempt(F.at(7, 11), key: "9000000077")]) {} else {
+        Issue.record("retry.capStillApplies")
+    }
+    let dnc = F.dnc([("9000000001", nil)])
+    equal(F.decide(now: F.at(7, 12), rules: r, dnc: dnc), .blocked(.doNotCall), "retry.dncStillApplies")
+    var other = DialRules(); other.retryKeys = ["9000000002"]
+    if case .blocked(.cooldown) = F.decide(now: F.at(7, 12), rules: other, log: called) {} else { Issue.record("retry.onlyItsOwnNumber") }
+}

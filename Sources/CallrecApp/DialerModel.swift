@@ -12,6 +12,9 @@ final class DialerModel: ObservableObject {
     @Published private(set) var listName = ""
     @Published private(set) var listPath: URL?
     @Published var error: String?
+    /// Result of the last Contacts save/remove, shown under the list.
+    @Published var contactsNote: String?
+    @Published var contactsBusy = false
 
     private let dialer = TelURLDialer()
 
@@ -23,7 +26,29 @@ final class DialerModel: ObservableObject {
     var sessionRunning: Bool { runner?.session.isRunning ?? false }
 
     /// Imports a CSV chosen by the user: a copy goes into ~/.callrec/lists (the original is never touched).
-    func importList(from url: URL) { open(csv: url, copy: true) }
+    func importList(from url: URL) {
+        open(csv: url, copy: true)
+        // Every imported list goes to Contacts too, so a lead calling back shows by agency name.
+        if error == nil { saveLeadsToContacts() }
+    }
+
+    func saveLeadsToContacts() {
+        guard let leads = imported?.leads, !contactsBusy else { return }
+        contactsBusy = true; contactsNote = "Saving \(leads.count) leads to Contacts…"
+        Task {
+            do { contactsNote = try await ContactsSync.save(leads).text } catch { contactsNote = error.localizedDescription }
+            contactsBusy = false
+        }
+    }
+
+    func removeLeadContacts() {
+        guard !contactsBusy else { return }
+        contactsBusy = true
+        Task {
+            do { contactsNote = "Removed \(try await ContactsSync.removeAll()) callrec lead contacts." } catch { contactsNote = error.localizedDescription }
+            contactsBusy = false
+        }
+    }
 
     private func open(csv source: URL, copy: Bool) {
         guard !sessionRunning else { error = "Stop the session before changing the list."; return }
@@ -87,7 +112,7 @@ final class DialerModel: ObservableObject {
         let since = Date().addingTimeInterval(-Double(days) * 86_400).timeIntervalSince1970
         let response = try await HistoryMailbox.ask(HistoryMailbox.Request(sinceEpoch: since))
         let rows = response.rows.map {
-            HistoryCall(key: $0.numberKey, date: Date(timeIntervalSince1970: $0.epoch), seconds: $0.seconds)
+            HistoryCall(key: $0.numberKey, date: Date(timeIntervalSince1970: $0.epoch), seconds: $0.seconds, originated: $0.originated)
         }
         return HistorySnapshot(rows: rows, detection: .unavailable(reason: "call history is read by the recorder, which does not report the line"))
     }

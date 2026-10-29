@@ -133,8 +133,91 @@ public final class DialRunner: ObservableObject {
     @Published public private(set) var pickedNext: String?
 
     public var nextUp: QueueItem? {
-        if let id = pickedNext, let item = queue.first(where: { $0.id == id }), item.status == .pending { return item }
-        return LeadQueue.nextUp(queue)
+        if let id = pickedNext, let item = queue.first(where: { $0.id == id }), isDialable(item) { return item }
+        return mode == .retries ? retryDue.first : LeadQueue.nextUp(queue)
+    }
+
+    // MARK: - No-connect retries
+
+    /// What a session dials: new leads, or no-connect leads whose retry is due (RetryPlan).
+    public enum Mode: String, Sendable { case fresh, retries }
+    @Published public private(set) var mode: Mode = .fresh
+
+    /// Switching is for between sessions only.
+    public func setMode(_ m: Mode) {
+        guard !session.isRunning, m != mode else { return }
+        mode = m; pickedNext = nil; viewing = nil; activeSequence = nil
+        objectWillChange.send()
+    }
+
+    /// Where a lead stands in the retry cadence, from its placed dials in the dial log (any list).
+    public func retryState(for leadID: String) -> RetryPlan.State {
+        guard let item = queue.first(where: { $0.id == leadID }) else { return .none }
+        let notPlaced = Set(dialLog.filter { $0.kind == .result && $0.result == .notPlaced }.map(\.attemptID))
+        let attempts = dialLog.filter { $0.kind == .attempt && $0.leadID == leadID && !notPlaced.contains($0.attemptID) }.map(\.ts)
+        return RetryPlan.state(attempts: attempts, status: item.status, now: services.now(), calendar: services.calendar,
+                               callingDays: rules.days)
+    }
+
+    /// No-connect leads due for a retry: those whose suggested part of the day is now come first,
+    /// then the longest-waiting.
+    public var retryDue: [QueueItem] {
+        let now = RetryPlan.Window.of(services.now(), calendar: services.calendar)
+        return queue.compactMap { item -> (QueueItem, Bool, Date)? in
+            guard item.status == .noAnswer, case .due(_, let last, let suggested) = retryState(for: item.id) else { return nil }
+            return (item, suggested == now, last)
+        }
+        .sorted { a, b in a.1 != b.1 ? a.1 : a.2 < b.2 }
+        .map(\.0)
+    }
+
+    /// Pending, or (in retry mode) a no-connect whose retry is due, or a lead returning our missed call.
+    private func isDialable(_ item: QueueItem) -> Bool {
+        if item.status == .pending { return true }
+        return mode == .retries && item.status == .noAnswer && retryState(for: item.id).isDue
+    }
+
+    /// Numbers that skip only the 7-day rule at this dial check: due retries and returned missed calls.
+    private func retryKeys() -> Set<String> {
+        var ids = Set(returning)
+        if mode == .retries { ids.formUnion(retryDue.map(\.id)) }
+        return Set(queue.filter { ids.contains($0.id) }.flatMap { AltNumbers.allNumbers(of: $0.lead) })
+    }
+
+    // MARK: - Callbacks
+
+    /// Calls from leads in the last 7 days (talked and missed), newest first.
+    @Published public private(set) var callbacks: [Callbacks.Item] = []
+    /// Leads whose missed call to us is being returned: their next dial skips the 7-day rule.
+    private var returning: Set<String> = []
+
+    /// Reads call history (through the recorder) and updates the callbacks. A lead who called back and
+    /// talked (>= 20 s) is out of no-answer: its status becomes called (its outcome is left alone).
+    /// Quiet on failure: this is not a dialing decision.
+    public func refreshCallbacks() async {
+        do { snapshot = try await services.loadHistory() } catch {
+            log("dialer: callbacks not refreshed, call history unavailable: \(error.localizedDescription)")
+            return
+        }
+        let found = Callbacks.find(history: snapshot?.rows ?? [], leads: services.leads.leads, log: dialLog,
+                                   since: services.now().addingTimeInterval(-7 * 86_400))
+        callbacks = found
+        for cb in found where cb.seconds >= 20 {
+            guard let item = queue.first(where: { $0.id == cb.leadID }), item.id != session.currentLeadID,
+                  [.noAnswer, .skipped, .pending].contains(item.status) else { continue }
+            setStatus(cb.leadID, .called)
+            log("dialer: \(item.lead.title) called back and talked \(cb.seconds) s: status called")
+        }
+        objectWillChange.send()
+    }
+
+    /// "Call back" on a missed call: that lead is the next dial, on the number that called.
+    public func callBack(_ cb: Callbacks.Item) {
+        guard canChooseNumber, let item = queue.first(where: { $0.id == cb.leadID }), item.status != .doNotCall else { return }
+        returning.insert(cb.leadID)
+        if item.status != .pending { setStatus(cb.leadID, .pending) }
+        pick(cb.leadID)
+        chooseNumber(cb.number, for: cb.leadID)
     }
 
     /// A finished lead the user clicked to look at (it is shown on the card; nothing about it changes).
@@ -146,7 +229,7 @@ public final class DialRunner: ObservableObject {
     public func callNext(_ id: String) {
         guard canChooseNumber, id != session.currentLeadID,
               let item = queue.first(where: { $0.id == id }) else { return }
-        guard item.status == .pending else { viewing = id; objectWillChange.send(); return }
+        guard isDialable(item) else { viewing = id; objectWillChange.send(); return }
         pick(id)
     }
 
@@ -203,7 +286,7 @@ public final class DialRunner: ObservableObject {
     public var focus: QueueItem? {
         if let c = current { return c }
         if let v = viewing, let item = queue.first(where: { $0.id == v }) { return item }
-        if let p = numberProgress, let item = queue.first(where: { $0.id == p.leadID }), item.status == .pending { return item }
+        if let p = numberProgress, let item = queue.first(where: { $0.id == p.leadID }), isDialable(item) { return item }
         return nextUp
     }
 
@@ -225,7 +308,7 @@ public final class DialRunner: ObservableObject {
     /// the chosen one goes next and the untried others follow as fallbacks. Only for the lead in front
     /// of the user, and never while a call is being placed, on, or wrapped up (the session ignores it).
     public func chooseNumber(_ number: String, for leadID: String) {
-        guard let item = queue.first(where: { $0.id == leadID }), item.status == .pending,
+        guard let item = queue.first(where: { $0.id == leadID }), isDialable(item),
               focus?.id == leadID || current == nil && nextUp?.id == leadID else { return }
         let full = AltNumbers.sequence(for: item.lead, dnc: dnc, enabled: true)
         guard full.contains(number) else { return }
@@ -572,7 +655,7 @@ public final class DialRunner: ObservableObject {
         var next = nextUp
         var number = next?.lead.number ?? ""
         var count = 1
-        if let p = numberProgress, let item = queue.first(where: { $0.id == p.leadID }), item.status == .pending {
+        if let p = numberProgress, let item = queue.first(where: { $0.id == p.leadID }), isDialable(item) {
             next = item; number = p.number; count = p.numbers.count
         } else if let item = next {
             let seq = AltNumbers.sequence(for: item.lead, dnc: dnc, enabled: services.config.tryAltNumbers)
@@ -582,7 +665,9 @@ public final class DialRunner: ObservableObject {
         if logUnreadable {
             decision = .pause(.simUnverified)   // never dial without a readable log
         } else {
-            decision = DialPolicy.evaluate(number: number, now: now, rules: rules, log: dialLog, dnc: dnc,
+            var r = rules
+            r.retryKeys = retryKeys()
+            decision = DialPolicy.evaluate(number: number, now: now, rules: r, log: dialLog, dnc: dnc,
                                            history: snapshot?.lastCallByKey ?? [:], session: facts(), calendar: services.calendar)
             // With nothing left to dial, report the session-level answer, not "invalid number".
             if next == nil, decision == .blocked(.invalidNumber) { decision = .allowed }
@@ -617,6 +702,7 @@ public final class DialRunner: ObservableObject {
         }
         attempt = entry
         dialedAt = now
+        returning.remove(id)   // a returned missed call gets its one exemption
         callStart = nil   // this call's recording start, once it begins; never the previous call's
         do {
             try services.dialer.dial(number: number)

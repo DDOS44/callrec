@@ -42,6 +42,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAudioCaptureUsageDescription</key><string>callrec records your phone calls so you can review and transcribe them.</string>
   <key>NSMicrophoneUsageDescription</key><string>callrec records your side of the call.</string>
+  <key>NSContactsUsageDescription</key><string>callrec saves your call list's leads to a 'callrec leads' group so a lead calling back shows by name.</string>
 </dict>
 </plist>
 PLIST
