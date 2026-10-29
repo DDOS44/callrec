@@ -14,10 +14,9 @@ public enum PickupRate {
 
     public static func compute(log: [DialLogEntry], list: String, records: [String: LeadRecord],
                                testKeys: Set<String>) -> Value {
-        let notPlaced = Set(log.filter { $0.kind == .result && $0.result == .notPlaced }.map(\.attemptID))
+        let notPlaced = DialPolicy.notPlacedIDs(log)
         let dials = log.filter {
-            $0.kind == .attempt && $0.list == list && !notPlaced.contains($0.attemptID)
-                && !testKeys.contains(PhoneNumber.normalize($0.key) ?? $0.key)
+            $0.kind == .attempt && $0.list == list && !notPlaced.contains($0.attemptID) && !testKeys.contains(DialPolicy.logKey($0))
         }.count
         let picked = records.filter { id, rec in
             let o = rec.outcome.trimmingCharacters(in: .whitespaces).lowercased()

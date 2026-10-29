@@ -209,7 +209,7 @@ public enum DialPolicy {
         let window = TimeInterval(rules.cooldownDays) * 86_400
         // A dial that never placed a call (macOS did not start it) did not ring the number,
         // so it does not start a cooldown. It still counts against the caps.
-        let notPlaced = Set(log.filter { $0.kind == .result && $0.result == .notPlaced }.map(\.attemptID))
+        let notPlaced = notPlacedIDs(log)
         let lastDial = log.filter { $0.kind == .attempt && logKey($0) == key && !notPlaced.contains($0.attemptID) }.map(\.ts).max()
         let last = [lastDial, history[key]].compactMap { $0 }.max()
         guard let last else { return nil }
@@ -217,9 +217,14 @@ public enum DialPolicy {
         return now < free ? free : nil
     }
 
+    /// Attempts that macOS never placed (closed with a not-placed result). One definition for every count.
+    public static func notPlacedIDs(_ log: [DialLogEntry]) -> Set<String> {
+        Set(log.filter { $0.kind == .result && $0.result == .notPlaced }.map(\.attemptID))
+    }
+
     /// A log entry's number in the same 10-digit form the policy compares against. The log stores
     /// the number as dialled; matching must not depend on every writer having normalised it.
-    static func logKey(_ e: DialLogEntry) -> String {
+    public static func logKey(_ e: DialLogEntry) -> String {
         PhoneNumber.normalize(e.key) ?? PhoneNumber.key(e.key) ?? e.key
     }
 

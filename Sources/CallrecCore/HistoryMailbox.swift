@@ -189,7 +189,7 @@ extension CallHistory {
     /// alike), each as date, last-10-digit number and seconds. No names.
     public static func mailboxRows(since epoch: Double) throws -> [HistoryMailbox.Row] {
         let apple = epoch - 978_307_200
-        let tail = " from ZCALLRECORD where ZDATE >= \(apple) order by ZDATE desc limit 1000;"
+        let tail = " from ZCALLRECORD where ZDATE >= \(apple) order by ZDATE desc limit 20000;"
         // Direction (ZORIGINATED) tells a callback from our own dial; an older database without the
         // column falls back to the query without it (direction then unknown).
         var r = try query("select coalesce(ZADDRESS,''), ZDATE, cast(coalesce(ZDURATION,0) as int), coalesce(ZORIGINATED,-1)" + tail)

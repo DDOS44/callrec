@@ -488,7 +488,11 @@ public struct DialSession: Equatable, Sendable {
             return []
         case .preflight, .countdown:
             phase = Self.phase(for: halt)
-        case .dialing, .waitingForCall, .resolvingDial:
+        case .resolvingDial:
+            // The call may have rung: its history lookup decides placed or not. Wait for it (at most the
+            // resolve grace) so a rung call is never written off as not placed (code review 2026-10-29).
+            if pendingHalt == nil || { if case .stop = halt { return true }; return false }() { pendingHalt = halt }
+        case .dialing, .waitingForCall:
             // No conversation yet, so nothing to protect: a Stop takes effect now
             // (it used to wait up to ~2 min for the not-placed timeout while the UI
             // said "Stopped" over a "Dialing…" spinner). A pause still waits, so a call

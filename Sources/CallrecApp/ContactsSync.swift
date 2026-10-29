@@ -2,17 +2,17 @@ import CallrecCore
 import Contacts
 import Foundation
 
-/// Saves a list's leads to the Contacts app in the "callrec leads" group (see ContactsPlan for the
-/// safety rule), and removes that group's cards on request. Contacts sync to the iPhone via iCloud,
-/// so a lead calling back shows by agency name.
+/// Saves a list's leads to the Contacts app in the "callrec leads" group, and removes them on request.
+/// Contacts sync to the iPhone via iCloud, so a lead calling back shows by agency name.
+///
+/// Safety (code review 2026-10-29): callrec keeps a ledger of the cards IT created
+/// (~/.callrec/contacts-created.json) and "Remove" deletes only those, never anything else in the
+/// group or any card it did not make. A lead already on any contact is left alone (ContactsPlan).
 enum ContactsSync {
     struct Report: Equatable {
-        var created = 0, grouped = 0, alreadyDone = 0, personal = 0
+        var created = 0, alreadySaved = 0
         var text: String {
-            var bits = ["\(created) saved", "\(grouped) existing cards grouped"]
-            if alreadyDone > 0 { bits.append("\(alreadyDone) already there") }
-            if personal > 0 { bits.append("\(personal) skipped (number belongs to one of your own contacts)") }
-            return "Contacts: " + bits.joined(separator: ", ") + "."
+            "Contacts: \(created) saved to 'callrec leads'" + (alreadySaved > 0 ? ", \(alreadySaved) already in your contacts (left as they are)." : ".")
         }
     }
 
@@ -23,27 +23,27 @@ enum ContactsSync {
         }
     }
 
+    static var ledgerURL: URL { DialerPaths.home.appendingPathComponent("contacts-created.json") }
+
     private static let keys: [CNKeyDescriptor] = [CNContactIdentifierKey, CNContactOrganizationNameKey,
                                                  CNContactPhoneNumbersKey].map { $0 as CNKeyDescriptor }
 
-    static func save(_ leads: [Lead]) async throws -> Report {
+    static func save(_ leads: [Lead], skip: Set<String>) async throws -> Report {
         let store = CNContactStore()
         guard try await store.requestAccess(for: .contacts) else { throw Failure.denied }
-        let group = try findOrCreateGroup(store)
-        let inGroup = Set(try store.unifiedContacts(matching: CNContact.predicateForContactsInGroup(withIdentifier: group.identifier),
-                                                    keysToFetch: keys).map(\.identifier))
         var existing: [String: [ContactsPlan.Existing]] = [:]
-        var byID: [String: CNContact] = [:]
         for lead in leads {
             for n in AltNumbers.allNumbers(of: lead) where existing[n] == nil {
                 let found = try store.unifiedContacts(matching: CNContact.predicateForContacts(matching: CNPhoneNumber(stringValue: "+91" + n)),
                                                       keysToFetch: keys)
-                for c in found { byID[c.identifier] = c }
-                existing[n] = found.map { .init(id: $0.identifier, organization: $0.organizationName, inGroup: inGroup.contains($0.identifier)) }
+                existing[n] = found.map { .init(id: $0.identifier, organization: $0.organizationName) }
             }
         }
-        let plan = ContactsPlan.plan(leads: leads, existing: existing)
+        let plan = ContactsPlan.plan(leads: leads, existing: existing, skip: skip)
+        guard !plan.create.isEmpty else { return Report(created: 0, alreadySaved: plan.alreadySaved.count) }
+        let group = try findOrCreateGroup(store)
         let request = CNSaveRequest()
+        var made: [String] = []
         for lead in plan.create {
             let c = CNMutableContact()
             c.contactType = .organization
@@ -54,27 +54,51 @@ enum ContactsSync {
             if !lead.email.isEmpty { c.emailAddresses = [CNLabeledValue(label: CNLabelWork, value: lead.email as NSString)] }
             request.add(c, toContainerWithIdentifier: nil)
             request.addMember(c, to: group)
+            made.append(c.identifier)
         }
-        for id in plan.addToGroup { if let c = byID[id] { request.addMember(c, to: group) } }
-        if !plan.create.isEmpty || !plan.addToGroup.isEmpty { try store.execute(request) }
-        log("contacts: saved \(plan.create.count), grouped \(plan.addToGroup.count), skipped \(plan.personal.count) personal")
-        return Report(created: plan.create.count, grouped: plan.addToGroup.count,
-                      alreadyDone: plan.alreadyDone, personal: plan.personal.count)
+        try store.execute(request)
+        try recordCreated(made)
+        log("contacts: saved \(made.count), left \(plan.alreadySaved.count) existing contact(s) alone")
+        return Report(created: made.count, alreadySaved: plan.alreadySaved.count)
     }
 
-    /// Deletes every card in the "callrec leads" group (only lead cards are ever put there), and the group.
+    /// Deletes only the cards callrec created (the ledger), then the group if it is left empty.
     static func removeAll() async throws -> Int {
         let store = CNContactStore()
         guard try await store.requestAccess(for: .contacts) else { throw Failure.denied }
-        guard let group = try store.groups(matching: nil).first(where: { $0.name == ContactsPlan.groupName }) else { return 0 }
-        let members = try store.unifiedContacts(matching: CNContact.predicateForContactsInGroup(withIdentifier: group.identifier),
-                                                keysToFetch: keys)
+        let ids = try readLedger()
+        guard !ids.isEmpty else { return 0 }
+        let ours = try store.unifiedContacts(matching: CNContact.predicateForContacts(withIdentifiers: ids), keysToFetch: keys)
         let request = CNSaveRequest()
-        for c in members { if let m = c.mutableCopy() as? CNMutableContact { request.delete(m) } }
-        if let g = group.mutableCopy() as? CNMutableGroup { request.delete(g) }
+        for c in ours { if let m = c.mutableCopy() as? CNMutableContact { request.delete(m) } }
+        if let group = try store.groups(matching: nil).first(where: { $0.name == ContactsPlan.groupName }) {
+            let left = try store.unifiedContacts(matching: CNContact.predicateForContactsInGroup(withIdentifier: group.identifier), keysToFetch: keys)
+                .filter { !ids.contains($0.identifier) }
+            if left.isEmpty, let g = group.mutableCopy() as? CNMutableGroup { request.delete(g) }
+        }
         try store.execute(request)
-        log("contacts: removed \(members.count) callrec lead card(s)")
-        return members.count
+        try writeLedger([])
+        log("contacts: removed \(ours.count) card(s) callrec created")
+        return ours.count
+    }
+
+    // MARK: Ledger
+
+    private static func readLedger() throws -> [String] {
+        guard FileManager.default.fileExists(atPath: ledgerURL.path) else { return [] }
+        return try JSONDecoder().decode([String].self, from: Data(contentsOf: ledgerURL))
+    }
+
+    private static func recordCreated(_ ids: [String]) throws {
+        var all = try readLedger()
+        for id in ids where !all.contains(id) { all.append(id) }
+        try writeLedger(all)
+    }
+
+    private static func writeLedger(_ ids: [String]) throws {
+        try Paths.ensureDir(ledgerURL.deletingLastPathComponent())
+        try JSONEncoder().encode(ids).write(to: ledgerURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: ledgerURL.path)
     }
 
     private static func findOrCreateGroup(_ store: CNContactStore) throws -> CNGroup {

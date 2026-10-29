@@ -36,7 +36,7 @@ final class DialerModel: ObservableObject {
         guard let leads = imported?.leads, !contactsBusy else { return }
         contactsBusy = true; contactsNote = "Saving \(leads.count) leads to Contacts…"
         Task {
-            do { contactsNote = try await ContactsSync.save(leads).text } catch { contactsNote = error.localizedDescription }
+            do { contactsNote = try await ContactsSync.save(leads, skip: Config.load().dialRules.testKeys).text } catch { contactsNote = error.localizedDescription }
             contactsBusy = false
         }
     }

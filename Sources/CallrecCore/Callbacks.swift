@@ -11,6 +11,8 @@ public enum Callbacks {
         public var date: Date
         public var seconds: Int
         public var missed: Bool { seconds == 0 }
+        /// A real conversation: 20 s or more. Shorter (voicemail, a quick hang-up) still needs a call back.
+        public var talked: Bool { seconds >= 20 }
         public var id: String { "\(leadID)@\(Int(date.timeIntervalSince1970))" }
     }
 
@@ -22,7 +24,7 @@ public enum Callbacks {
             guard row.date >= since, let lead = owner[row.key] else { return nil }
             if row.originated == true { return nil }
             if row.originated == nil {
-                let ours = ourDials.contains { (PhoneNumber.normalize($0.key) ?? $0.key) == row.key && abs($0.ts.timeIntervalSince(row.date)) <= 180 }
+                let ours = ourDials.contains { DialPolicy.logKey($0) == row.key && abs($0.ts.timeIntervalSince(row.date)) <= 180 }
                 if ours { return nil }
             }
             return Item(leadID: lead, number: row.key, date: row.date, seconds: row.seconds)

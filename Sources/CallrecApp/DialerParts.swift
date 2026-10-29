@@ -893,16 +893,16 @@ struct CallbacksPanel: View {
             ForEach(runner.callbacks.prefix(8)) { cb in
                 let title = runner.queue.first { $0.id == cb.leadID }?.lead.title ?? PhoneNumber.display(cb.number)
                 HStack(spacing: 10) {
-                    Image(systemName: cb.missed ? "phone.down.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(cb.missed ? .red : .green)
+                    Image(systemName: cb.talked ? "checkmark.circle.fill" : "phone.down.fill")
+                        .foregroundStyle(cb.talked ? .green : .red)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title).font(.body.weight(.medium)).lineLimit(1)
-                        Text(cb.missed ? "Missed call · \(Self.when.string(from: cb.date))"
-                                       : "Called you · talked \(cb.seconds / 60)m \(cb.seconds % 60)s · \(Self.when.string(from: cb.date)) · moved to Called")
+                        Text(cb.talked ? "Called you · talked \(cb.seconds / 60)m \(cb.seconds % 60)s · \(Self.when.string(from: cb.date)) · moved to Called"
+                                       : (cb.missed ? "Missed call" : "Short call, \(cb.seconds) s") + " · \(Self.when.string(from: cb.date))")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if cb.missed {
+                    if !cb.talked {
                         Button("Call back") { runner.callBack(cb) }
                             .disabled(!runner.canChooseNumber)
                             .help("Make them the next dial, on the number that called you")

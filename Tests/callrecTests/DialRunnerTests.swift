@@ -625,3 +625,58 @@ private func fakeCal(status: Int, body: String) -> CalCom {
     r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
     equal(rig.dialer.dialed.last ?? "", "9000000201", "pickRetry.altFirst")
 }
+
+@MainActor @Test func retryModeStillDialsTheLeadsAltsInTheSameTry() async throws {
+    let rig = try Rig(csv: "company,phone,alt_phone,confidence\nFake One,9000000001,9000000201,high\nFake Two,9000000002,,medium\n")
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    await callAndWrap(rig, outcome: "no connect"); rig.advance(130); r.tick()
+    await callAndWrap(rig, outcome: "no connect")                                // both numbers: no answer
+    r.stop(); await rig.settle()
+    rig.box.now = DialFixture.at(8, 11)
+    r.setMode(.retries)
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    await callAndWrap(rig, outcome: "no connect")                                // retry: main again
+    rig.advance(130); r.tick()
+    equal(Array(rig.dialer.dialed.suffix(2)), ["9000000001", "9000000201"], "retryAlt.altFollows")
+}
+
+@MainActor @Test func aLeadLeftPartWayStartsWithItsUntriedNumbersLater() async throws {
+    let rig = try Rig(csv: "company,phone,alt_phone,confidence\nFake One,9000000001,9000000201,high\nFake Two,9000000002,,medium\n")
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    await callAndWrap(rig, outcome: "no connect")                                // main of lead 1 rang out
+    r.callNext("9000000002")                                                     // jump to lead 2 before the alt
+    rig.advance(130); r.tick()
+    equal(rig.dialer.dialed.last ?? "", "9000000002", "partWay.jumped")
+    await callAndWrap(rig, outcome: "pitched")
+    rig.advance(130); r.tick()
+    equal(rig.dialer.dialed.last ?? "", "9000000201", "partWay.untriedAltNotSkipped")
+}
+
+@MainActor @Test func preflightDialsLeftIgnoresTestDials() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let detail = rig.runner.preflightItems().first { $0.detail.contains("of 30 today") }?.detail ?? ""
+    expect(detail.hasPrefix("30 of 30"), "preflight.allLeft: \(detail)")
+}
+
+@MainActor @Test func retryModeDialsTheAltAfterARingOutTheRecorderCaught() async throws {
+    let rig = try Rig(csv: "company,phone,alt_phone,confidence\nFake One,9000000001,9000000201,high\nFake Two,9000000002,,medium\n")
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    await callAndWrap(rig, outcome: "no connect"); rig.advance(130); r.tick()
+    await callAndWrap(rig, outcome: "no connect")
+    r.stop(); await rig.settle()
+    rig.box.now = DialFixture.at(8, 11)
+    r.setMode(.retries)
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    // Main rings for 2 s only: the recorder calls it unanswered, no wrap-up, lead stays no answer.
+    r.tick(); rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(1); r.tick()
+    rig.advance(2); rig.box.recording = false; r.tick(); await rig.settle()
+    rig.advance(130); r.tick()
+    equal(Array(rig.dialer.dialed.suffix(2)), ["9000000001", "9000000201"], "retryRingOut.altFollows")
+}

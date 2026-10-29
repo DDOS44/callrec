@@ -29,13 +29,13 @@ struct DialerListColumn: View {
                     Text("Contacts").font(.headline)
                     Button { dialer.saveLeadsToContacts() } label: { Label("Save leads to Contacts", systemImage: "person.crop.circle.badge.plus") }
                         .disabled(dialer.contactsBusy)
-                        .help("Adds this list's leads to the 'callrec leads' group, named by agency, so callbacks show by name. Imports do this automatically.")
+                        .help("Saves leads that are not in your contacts yet to the 'callrec leads' group, named by agency, so callbacks show by name. Imports do this automatically.")
                     if confirmRemove {
                         HStack {
                             Button("Delete them", role: .destructive) { confirmRemove = false; dialer.removeLeadContacts() }
                             Button("Cancel") { confirmRemove = false }
                         }
-                        Text("Deletes every contact in the 'callrec leads' group. Your own contacts are never in it.")
+                        Text("Deletes only the contacts callrec itself created. Your own contacts, and cards you imported yourself, are never touched.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         Button { confirmRemove = true } label: { Label("Remove callrec contacts…", systemImage: "person.crop.circle.badge.minus") }
