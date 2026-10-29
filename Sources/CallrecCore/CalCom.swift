@@ -5,11 +5,14 @@ import Security
 /// free slots, enter their name and email, Book. Cal.com creates the event, adds the meeting link
 /// (Google Meet, Cal Video... whatever the event type uses) and emails the invite to them.
 ///
-/// The API key lives in the macOS Keychain (service `callrec-calcom`), never in config or code.
+/// The API key is read only when slots are fetched or a booking is made, never at launch, from
+/// ~/.callrec/calcom.key (owner-only, 0600), else the Keychain (service `callrec-calcom`). Never config
+/// or code. Why a file first: callrec is signed with a local certificate (no Apple team ID), so the
+/// Keychain ties "Always Allow" to one exact build and asks again after every update (2026-10-29).
 public struct CalCom: Sendable {
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
-    public let apiKey: String
+    let key: @Sendable () throws -> String
     public let eventTypeId: Int
     public let timeZone: TimeZone
     let transport: Transport
@@ -17,7 +20,31 @@ public struct CalCom: Sendable {
 
     public init(apiKey: String, eventTypeId: Int, timeZone: TimeZone,
                 transport: @escaping Transport = { try await URLSession.shared.data(for: $0) }) {
-        self.apiKey = apiKey; self.eventTypeId = eventTypeId; self.timeZone = timeZone; self.transport = transport
+        self.init(key: { apiKey }, eventTypeId: eventTypeId, timeZone: timeZone, transport: transport)
+    }
+
+    /// `key` is called for each request, so nothing is read until the user books.
+    public init(key: @escaping @Sendable () throws -> String, eventTypeId: Int, timeZone: TimeZone,
+                transport: @escaping Transport = { try await URLSession.shared.data(for: $0) }) {
+        self.key = key; self.eventTypeId = eventTypeId; self.timeZone = timeZone; self.transport = transport
+    }
+
+    public static var keyFile: URL { DialerPaths.home.appendingPathComponent("calcom.key") }
+
+    /// The key from `file` (must be owner-only), else from `keychain`. Fails loudly with what to do.
+    public static func loadKey(file: URL = keyFile, keychain: () -> String? = { apiKeyFromKeychain() }) throws -> String {
+        if FileManager.default.fileExists(atPath: file.path) {
+            let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
+            let mode = (attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0o777
+            guard mode & 0o077 == 0 else {
+                throw Failure(message: "\(file.path) can be read by other users. Run: chmod 600 \(file.path)")
+            }
+            let k = try String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !k.isEmpty else { throw Failure(message: "\(file.path) is empty.") }
+            return k
+        }
+        if let k = keychain(), !k.isEmpty { return k }
+        throw Failure(message: "No Cal.com API key. Put it in \(file.path) (chmod 600).")
     }
 
     public struct Booking: Equatable, Sendable {
@@ -56,7 +83,7 @@ public struct CalCom: Sendable {
                          .init(name: "timeZone", value: timeZone.identifier)]
         guard let url = c?.url else { throw Failure(message: "Bad slots URL.") }
         var r = URLRequest(url: url)
-        header(&r, version: "2024-09-04")
+        try header(&r, version: "2024-09-04")
         return r
     }
 
@@ -79,7 +106,7 @@ public struct CalCom: Sendable {
     func bookingRequest(start: Date, name: String, email: String) throws -> URLRequest {
         var r = URLRequest(url: base.appendingPathComponent("bookings"))
         r.httpMethod = "POST"
-        header(&r, version: "2024-08-13")
+        try header(&r, version: "2024-08-13")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let iso = ISO8601DateFormatter(); iso.timeZone = TimeZone(identifier: "UTC")
         let body: [String: Any] = [
@@ -106,8 +133,8 @@ public struct CalCom: Sendable {
 
     // MARK: Shared
 
-    private func header(_ r: inout URLRequest, version: String) {
-        r.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    private func header(_ r: inout URLRequest, version: String) throws {
+        r.setValue("Bearer \(try key())", forHTTPHeaderField: "Authorization")
         r.setValue(version, forHTTPHeaderField: "cal-api-version")
         r.setValue("callrec", forHTTPHeaderField: "User-Agent")
         r.timeoutInterval = 20

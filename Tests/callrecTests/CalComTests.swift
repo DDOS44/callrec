@@ -59,3 +59,30 @@ final class SeenBox: @unchecked Sendable {
         #expect(error.localizedDescription.contains("Keychain"))
     }
 }
+
+// 2026-10-29: a Keychain prompt on every launch. The key is now read only when booking, from an
+// owner-only file first; a file others can read is refused.
+@Test func keyFileMustBeOwnerOnlyAndWinsOverTheKeychain() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("calkey-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { Fs.remove(dir) }
+    let f = dir.appendingPathComponent("calcom.key")
+    #expect(throws: CalCom.Failure.self) { try CalCom.loadKey(file: f, keychain: { nil }) }
+    #expect(try CalCom.loadKey(file: f, keychain: { "from-keychain" }) == "from-keychain")
+    try Data("file-key\n".utf8).write(to: f)
+    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: f.path)
+    #expect(throws: CalCom.Failure.self) { try CalCom.loadKey(file: f, keychain: { "from-keychain" }) }
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: f.path)
+    #expect(try CalCom.loadKey(file: f, keychain: { "from-keychain" }) == "file-key")
+}
+
+@Test func theKeyIsNotReadUntilARequestIsMade() async throws {
+    let reads = SeenBox()
+    let c = CalCom(key: { reads.set(URLRequest(url: URL(string: "https://read")!)); return "k" }, eventTypeId: 1,
+                   timeZone: TimeZone(identifier: "Asia/Kolkata")!) { req in
+        (Data(#"{"data":{}}"#.utf8), HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+    #expect(reads.req == nil, "creating the client reads nothing")
+    _ = try await c.slots(on: DialFixture.at(30, 9))
+    #expect(reads.req != nil)
+}
