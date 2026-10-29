@@ -10,9 +10,12 @@ import Foundation
 /// group or any card it did not make. A lead already on any contact is left alone (ContactsPlan).
 enum ContactsSync {
     struct Report: Equatable {
-        var created = 0, alreadySaved = 0
+        var created = 0, adopted = 0, alreadySaved = 0
         var text: String {
-            "Contacts: \(created) saved to 'callrec leads'" + (alreadySaved > 0 ? ", \(alreadySaved) already in your contacts (left as they are)." : ".")
+            var t = "Contacts: \(created) saved to 'callrec leads'"
+            if adopted > 0 { t += ", \(adopted) cards from callrec's .vcf now managed by callrec" }
+            if alreadySaved > 0 { t += ", \(alreadySaved) of your own contacts left as they are" }
+            return t + "."
         }
     }
 
@@ -25,25 +28,43 @@ enum ContactsSync {
 
     static var ledgerURL: URL { DialerPaths.home.appendingPathComponent("contacts-created.json") }
 
-    private static let keys: [CNKeyDescriptor] = [CNContactIdentifierKey, CNContactOrganizationNameKey,
-                                                 CNContactPhoneNumbersKey].map { $0 as CNKeyDescriptor }
+    private static let keys: [CNKeyDescriptor] = [CNContactIdentifierKey, CNContactOrganizationNameKey, CNContactGivenNameKey,
+                                                 CNContactFamilyNameKey, CNContactPhoneNumbersKey].map { $0 as CNKeyDescriptor }
 
     static func save(_ leads: [Lead], skip: Set<String>) async throws -> Report {
         let store = CNContactStore()
         guard try await store.requestAccess(for: .contacts) else { throw Failure.denied }
         var existing: [String: [ContactsPlan.Existing]] = [:]
+        var cards: [String: CNContact] = [:]
         for lead in leads {
             for n in AltNumbers.allNumbers(of: lead) where existing[n] == nil {
                 let found = try store.unifiedContacts(matching: CNContact.predicateForContacts(matching: CNPhoneNumber(stringValue: "+91" + n)),
                                                       keysToFetch: keys)
+                for c in found { cards[c.identifier] = c }
                 existing[n] = found.map { .init(id: $0.identifier, organization: $0.organizationName) }
             }
         }
         let plan = ContactsPlan.plan(leads: leads, existing: existing, skip: skip)
-        guard !plan.create.isEmpty else { return Report(created: 0, alreadySaved: plan.alreadySaved.count) }
+        // Cards made from callrec's own lead .vcf are adopted (fingerprint check), so Remove covers them.
+        let ledger = Set(try readLedger())
+        var adopt: [CNContact] = []
+        var adoptedIDs = Set<String>()
+        for lead in plan.alreadySaved {
+            for id in AltNumbers.allNumbers(of: lead).flatMap({ existing[$0] ?? [] }).map(\.id) {
+                guard let c = cards[id], !ledger.contains(id), !adoptedIDs.contains(id) else { continue }
+                let card = ContactsPlan.Card(id: id, organization: c.organizationName, givenName: c.givenName, familyName: c.familyName,
+                                             numbers: c.phoneNumbers.compactMap { PhoneNumber.normalize($0.value.stringValue) })
+                if ContactsPlan.isFromCallrecVcf(card, lead: lead) { adopt.append(c); adoptedIDs.insert(id) }
+            }
+        }
+        let personal = plan.alreadySaved.count - adopt.count
+        guard !plan.create.isEmpty || !adopt.isEmpty else { return Report(created: 0, adopted: 0, alreadySaved: personal) }
         let group = try findOrCreateGroup(store)
         let request = CNSaveRequest()
         var made: [String] = []
+        let inGroup = Set(try store.unifiedContacts(matching: CNContact.predicateForContactsInGroup(withIdentifier: group.identifier),
+                                                    keysToFetch: keys).map(\.identifier))
+        for c in adopt where !inGroup.contains(c.identifier) { request.addMember(c, to: group) }
         for lead in plan.create {
             let c = CNMutableContact()
             c.contactType = .organization
@@ -57,9 +78,9 @@ enum ContactsSync {
             made.append(c.identifier)
         }
         try store.execute(request)
-        try recordCreated(made)
-        log("contacts: saved \(made.count), left \(plan.alreadySaved.count) existing contact(s) alone")
-        return Report(created: made.count, alreadySaved: plan.alreadySaved.count)
+        try recordCreated(made + adopt.map(\.identifier))
+        log("contacts: saved \(made.count), adopted \(adopt.count) .vcf card(s), left \(personal) contact(s) alone")
+        return Report(created: made.count, adopted: adopt.count, alreadySaved: personal)
     }
 
     /// Deletes only the cards callrec created (the ledger), then the group if it is left empty.

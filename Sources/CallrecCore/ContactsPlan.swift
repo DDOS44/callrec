@@ -16,6 +16,32 @@ public enum ContactsPlan {
         public init(id: String, organization: String) { self.id = id; self.organization = organization }
     }
 
+    /// A contact card as seen for the .vcf check.
+    public struct Card: Equatable, Sendable {
+        public var id: String
+        public var organization: String
+        public var givenName: String
+        public var familyName: String
+        /// 10-digit keys of its phone numbers.
+        public var numbers: [String]
+        public init(id: String, organization: String, givenName: String, familyName: String, numbers: [String]) {
+            self.id = id; self.organization = organization; self.givenName = givenName
+            self.familyName = familyName; self.numbers = numbers
+        }
+    }
+
+    /// True only for a card made from callrec's own lead .vcf (2026-10-29 export): name and organisation
+    /// both exactly the lead's company, no surname, and exactly the lead's numbers. Such a card can be
+    /// adopted into the ledger so "Remove callrec contacts" covers it; any other card never is.
+    public static func isFromCallrecVcf(_ card: Card, lead: Lead) -> Bool {
+        let company = lead.company.trimmingCharacters(in: .whitespaces)
+        return !company.isEmpty
+            && card.organization.trimmingCharacters(in: .whitespaces) == company
+            && card.givenName.trimmingCharacters(in: .whitespaces) == company
+            && card.familyName.trimmingCharacters(in: .whitespaces).isEmpty
+            && Set(card.numbers) == Set(AltNumbers.allNumbers(of: lead))
+    }
+
     public struct Plan: Equatable, Sendable {
         /// Leads with no contact on any of their numbers: callrec creates a card in the group.
         public var create: [Lead] = []
