@@ -96,7 +96,7 @@ final class DialerModel: ObservableObject {
                                  store: LeadStateStore) -> DialRunner.Services {
         let stateURL = DialerPaths.home.appendingPathComponent("state.json")
         let root = config.recordingsURL
-        return DialRunner.Services(
+        var services = DialRunner.Services(
             dialer: dialer, config: config, listName: name, leads: leads, store: store,
             callState: {
                 guard let s = StatusProbe.watcherState(at: stateURL) else { return .init(recording: false) }
@@ -114,5 +114,7 @@ final class DialerModel: ObservableObject {
                 c.coldSIM = value
                 try c.save()
             })
+        services.openURL = { NSWorkspace.shared.open($0) }
+        return services
     }
 }

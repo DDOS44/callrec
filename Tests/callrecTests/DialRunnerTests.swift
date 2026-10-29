@@ -19,7 +19,8 @@ private struct Rig {
     let dir: URL
     let runner: DialRunner
 
-    init(logURL: URL? = nil, snapshot: HistorySnapshot? = nil, recordings: [(day: String, file: String)] = []) throws {
+    init(logURL: URL? = nil, snapshot: HistorySnapshot? = nil, recordings: [(day: String, file: String)] = [],
+         booking: String = "", open: @escaping (URL) -> Bool = { _ in false }) throws {
         if let snapshot { box.snapshot = snapshot }
         dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-runner-\(UUID())")
         try Paths.ensureDir(dir)
@@ -38,7 +39,8 @@ private struct Rig {
         let box = self.box
         // Isolated from the real ~/CallRecordings: tests must never read the user's data.
         var config = Config(); config.recordingsDir = dir.appendingPathComponent("recordings").path
-        let services = DialRunner.Services(
+        config.bookingLink = booking
+        var services = DialRunner.Services(
             dialer: dialer, config: config, listName: "fake", leads: leads, store: store,
             dialLogURL: logURL ?? dir.appendingPathComponent("dial-log.jsonl"), dncURL: dir.appendingPathComponent("dnc.txt"),
             calendar: DialFixture.cal, now: { box.now },
@@ -49,6 +51,7 @@ private struct Rig {
                 box.mdWrites.append((outcome, notes)); return true
             },
             saveColdSIM: { _ in }, autoTick: false)
+        services.openURL = open
         runner = DialRunner(services)
     }
 
@@ -409,4 +412,87 @@ private struct Rig {
 @Test func dialsTodayTextShowsTestDialsSeparately() {
     equal(DialRunner.dialsTodayText(total: 10, test: 10), "10 (10 test)", "meter.testDials")
     equal(DialRunner.dialsTodayText(total: 4, test: 0), "4", "meter.noTestDials")
+}
+
+// 2026-10-29: the queue only had a right-click menu, so "click a lead to call it" did nothing.
+// Clicking a row makes that lead the next dial; a finished lead clicked is moved back first.
+
+@MainActor @Test func clickingAQueueRowMakesItTheNextDial() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.callNext("9000000003")
+    equal(r.nextUp?.id ?? "", "9000000003", "pick.nextUp")
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    equal(rig.dialer.dialed, ["9000000003"], "pick.dialledFirst")
+    r.tick(); rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(2); r.tick()
+    rig.advance(60); rig.box.recording = false; r.tick(); await rig.settle()
+    r.saveWrapUp(outcome: "pitched", notes: "", doNotCall: false)
+    equal(r.nextUp?.id ?? "", "9000000001", "pick.thenBackToListOrder")
+}
+
+@MainActor @Test func clickingAFinishedLeadMovesItBackButNeverADoNotCallOne() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()   // dials lead 1
+    r.tick(); rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(2); r.tick()
+    rig.advance(60); rig.box.recording = false; r.tick(); await rig.settle()
+    r.saveWrapUp(outcome: "callback", notes: "", doNotCall: false)
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .called, "pickBack.calledFirst")
+    r.callNext("9000000001")
+    equal(r.queue.first { $0.id == "9000000001" }?.status, .pending, "pickBack.pending")
+    equal(r.nextUp?.id ?? "", "9000000001", "pickBack.next")
+    r.markDoNotCall("9000000002")
+    r.callNext("9000000002")
+    equal(r.queue.first { $0.id == "9000000002" }?.status, .doNotCall, "pickDNC.untouched")
+    equal(r.nextUp?.id ?? "", "9000000001", "pickDNC.notNext")
+}
+
+@MainActor @Test func stepMovesTheNextLeadBackAndForthThroughPendingLeads() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.step(1)
+    equal(r.nextUp?.id ?? "", "9000000002", "step.forward")
+    r.step(1)
+    equal(r.nextUp?.id ?? "", "9000000003", "step.forwardAgain")
+    r.step(1)
+    equal(r.nextUp?.id ?? "", "9000000003", "step.stopsAtTheEnd")
+    r.step(-2)
+    equal(r.nextUp?.id ?? "", "9000000001", "step.back")
+}
+
+// Booking link: typed email -> compose window with the meeting link; recorded on the lead and in the notes.
+
+@MainActor @Test func sendBookingLinkOpensComposeAndRecordsIt() async throws {
+    var opened: [URL] = []
+    let rig = try Rig(booking: "https://example.com/book/30min", open: { opened.append($0); return true })
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    r.tick(); rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(2); r.tick()
+
+    equal(r.sendBookingLink(to: "rahul@fake", for: "9000000001") ?? "", "That email doesn't look right. Check it with them.", "book.invalid")
+    expect(opened.isEmpty, "book.invalidOpensNothing")
+    expect(r.sendBookingLink(to: " rahul@fakeagency.in ", for: "9000000001") == nil, "book.sent")
+    equal(opened.count, 1, "book.opened")
+    let q = URLComponents(url: opened[0], resolvingAgainstBaseURL: false)?.queryItems ?? []
+    equal(q.first { $0.name == "to" }?.value ?? "", "rahul@fakeagency.in", "book.to")
+    expect((q.first { $0.name == "body" }?.value ?? "").contains("https://example.com/book/30min"), "book.link")
+    let rec = r.queue.first { $0.id == "9000000001" }?.record
+    equal(rec?.email ?? "", "rahul@fakeagency.in", "book.emailSaved")
+    expect(rec?.bookingSentAt != nil, "book.sentAtSaved")
+
+    rig.advance(60); rig.box.recording = false; r.tick(); await rig.settle()
+    r.saveWrapUp(outcome: "pitched", notes: "wants a demo", doNotCall: false)
+    let notes = r.queue.first { $0.id == "9000000001" }?.record.notes ?? ""
+    expect(notes.contains("wants a demo") && notes.contains("Booking link sent to rahul@fakeagency.in"), "book.inNotes: \(notes)")
+}
+
+@MainActor @Test func sendBookingLinkWithoutALinkConfiguredSaysSo() async throws {
+    let rig = try Rig()
+    defer { Fs.remove(rig.dir) }
+    let msg = rig.runner.sendBookingLink(to: "rahul@fakeagency.in", for: "9000000001") ?? ""
+    expect(msg.contains("bookingLink"), "nolink.message: \(msg)")
 }

@@ -144,7 +144,11 @@ private struct DialerSession: View {
                         LeadHero(item: item, isCalling: runner.current != nil, isTest: runner.isTestLead(item.lead),
                                  progress: progress,
                                  calledBefore: runner.snapshot?.lastCallByKey[progress?.number ?? item.lead.number],
-                                 onChoose: runner.canChooseNumber ? { runner.chooseNumber($0, for: item.id) } : nil)
+                                 onChoose: runner.canChooseNumber ? { runner.chooseNumber($0, for: item.id) } : nil,
+                                 onStep: runner.canChooseNumber && runner.current == nil ? { runner.step($0) } : nil)
+                        if runner.current?.id == item.id, !runner.services.config.bookingLink.isEmpty {
+                            BookingBox(runner: runner, leadID: item.id)
+                        }
                     }
                     QueueSection(runner: runner)
                 }

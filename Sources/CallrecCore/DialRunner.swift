@@ -39,6 +39,8 @@ public final class DialRunner: ObservableObject {
         public var applyToMarkdown: (_ callStart: Date, _ lead: Lead, _ outcome: String, _ notes: String) throws -> Bool
         public var saveColdSIM: (String) throws -> Void
         public var autoTick: Bool
+        /// Opens a URL (the booking email's compose window). The app passes NSWorkspace; tests capture it.
+        public var openURL: (URL) -> Bool = { _ in false }
 
         public init(dialer: Dialer, config: Config, listName: String, leads: LeadImport, store: LeadStateStore,
                     dialLogURL: URL = DialerPaths.dialLog, dncURL: URL = DialerPaths.dnc, calendar: Calendar = .current,
@@ -124,7 +126,37 @@ public final class DialRunner: ObservableObject {
     // MARK: - Reading
 
     public var current: QueueItem? { session.currentLeadID.flatMap { id in queue.first { $0.id == id } } }
-    public var nextUp: QueueItem? { LeadQueue.nextUp(queue) }
+    /// A lead the user clicked to call next. Used while it is pending; after it is dialled the queue
+    /// goes back to list order.
+    @Published public private(set) var pickedNext: String?
+
+    public var nextUp: QueueItem? {
+        if let id = pickedNext, let item = queue.first(where: { $0.id == id }), item.status == .pending { return item }
+        return LeadQueue.nextUp(queue)
+    }
+
+    /// Queue row click: make this lead the next dial. A lead already finished (called, no answer,
+    /// skipped) is moved back to pending first; a do-not-call lead never is. The 7-day rule and every
+    /// other guardrail still apply when it is dialled. Not while a call is placed, on, or wrapped up.
+    public func callNext(_ id: String) {
+        guard canChooseNumber, id != session.currentLeadID,
+              let item = queue.first(where: { $0.id == id }), item.status != .doNotCall else { return }
+        if item.status != .pending, let back = LeadStatus.afterMoveBack(current: item.status) { setStatus(id, back) }
+        if skipUndo?.leadID == id { skipUndo = nil }
+        // Leaving a lead part-way through its numbers: its remaining numbers are dropped, it stays pending.
+        if let p = numberProgress, p.leadID != id { activeSequence = nil }
+        pickedNext = id
+        objectWillChange.send()
+    }
+
+    /// Lead card arrows: move "next up" to the previous / next PENDING lead in queue order.
+    public func step(_ delta: Int) {
+        let pending = queue.filter { $0.status == .pending }
+        guard let current = nextUp, let i = pending.firstIndex(where: { $0.id == current.id }) else { return }
+        let j = min(max(i + delta, 0), pending.count - 1)
+        guard j != i else { return }
+        callNext(pending[j].id)
+    }
 
     /// Where the session stands in the current lead's numbers.
     public struct NumberProgress: Equatable, Sendable {
@@ -181,6 +213,36 @@ public final class DialRunner: ObservableObject {
         activeSequence = (leadID, order)
         perform(session.handle(.chooseNumber(leadID: leadID, count: order.count, index: tried.count)))
         objectWillChange.send()
+    }
+
+    /// The email to show in the booking box: one typed this session, else the lead's saved one, else the CSV's.
+    public func bookingEmail(for leadID: String) -> String {
+        if let typed = emailDrafts[leadID] { return typed }
+        guard let item = queue.first(where: { $0.id == leadID }) else { return "" }
+        return item.record.email ?? item.lead.email
+    }
+    public func setBookingEmail(_ email: String, for leadID: String) { emailDrafts[leadID] = email }
+    private var emailDrafts: [String: String] = [:]
+
+    /// Opens a ready email with the booking link to `email`. Returns a message to show when it could not
+    /// (no link configured, an address that does not look right, nothing to open it with); nil when opened.
+    @discardableResult
+    public func sendBookingLink(to email: String, for leadID: String) -> String? {
+        let c = services.config
+        guard !c.bookingLink.isEmpty else { return "No booking link set. Add \"bookingLink\" to ~/.callrec/config.json." }
+        let to = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard BookingEmail.isValid(to) else { return "That email doesn't look right. Check it with them." }
+        guard let item = queue.first(where: { $0.id == leadID }) else { return "Lead not found." }
+        let fill = { (t: String) in BookingEmail.fill(t, name: BookingEmail.firstName(from: item.lead.owner),
+                                                       company: item.lead.company, link: c.bookingLink, sender: c.bookingSender) }
+        let via = BookingEmail.Via(rawValue: c.bookingCompose) ?? .gmail
+        guard let url = BookingEmail.composeURL(to: to, subject: fill(c.bookingSubject), body: fill(c.bookingBody),
+                                                via: via, account: c.bookingGmailAccount),
+              services.openURL(url) else { return "Could not open the email. Copy the link and send it by hand." }
+        emailDrafts[leadID] = to
+        update(leadID) { $0.email = to; $0.bookingSentAt = services.now() }
+        objectWillChange.send()
+        return nil
     }
 
     /// Countdown button: give up on the lead's remaining numbers and move to the next lead.
@@ -567,6 +629,12 @@ public final class DialRunner: ObservableObject {
     }
 
     private func wrapUp(_ id: String, outcome: String, notes: String) {
+        var notes = notes
+        // A booking link sent during this call goes into the notes, so the call's file says so too.
+        if let rec = queue.first(where: { $0.id == id })?.record, let sent = rec.bookingSentAt, let email = rec.email,
+           sent >= (dialedAt ?? .distantPast), !notes.contains(email) {
+            notes += (notes.isEmpty ? "" : "\n") + "Booking link sent to \(email)"
+        }
         update(id) {
             $0.outcome = outcome; $0.notes = notes
             $0.status = LeadStatus.afterWrapUp(outcome: outcome, current: $0.status)

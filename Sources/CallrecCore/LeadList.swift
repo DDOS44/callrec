@@ -42,6 +42,8 @@ public struct Lead: Identifiable, Equatable, Sendable {
     /// Every valid alternative number from the row (a sheet cell can hold several).
     public var altNumbers: [String] = []
     public var caller: String
+    /// The row's email column, if any (prefills "Send booking link").
+    public var email = ""
     /// 1-based position among the file's data rows (header excluded), for display and stable ordering.
     public var order: Int
 
@@ -102,7 +104,7 @@ public enum LeadImportError: Error, LocalizedError, Equatable {
 public enum LeadImporter {
 
     private enum Field: CaseIterable {
-        case company, phone, city, owner, whatTheyDo, angle, confidence, altNumber, caller
+        case company, phone, city, owner, whatTheyDo, angle, confidence, altNumber, caller, email
 
         var names: [String] {
             switch self {
@@ -114,6 +116,7 @@ public enum LeadImporter {
             case .angle: return ["angle", "callangle", "pitch", "talkingpoint", "pitchangle", "hook", "opener", "scriptangle"]
             case .confidence: return ["confidence", "priority", "fit", "tier"]
             case .altNumber: return ["altnumber", "altphone", "alternatenumber", "alternatephone", "secondaryphone", "phone2", "alternate", "alt"]
+            case .email: return ["email", "emailaddress", "emailid", "mail", "contactemail"]
             case .caller: return ["caller", "assignedto", "assignee", "ownerrep", "dialer"]
             }
         }
@@ -204,6 +207,7 @@ public enum LeadImporter {
                             caller: cell(row, .caller), order: order)
             lead.repeatIndex = occurrences[number] ?? 1
             lead.altNumbers = alts
+            lead.email = cell(row, .email).trimmingCharacters(in: .whitespacesAndNewlines)
             out.leads.append(lead)
         }
         if altFragments > 0 {

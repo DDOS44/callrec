@@ -59,6 +59,16 @@ public struct Config: Codable, Sendable {
     /// When a placed call does not connect, dial the lead's next number (its alt numbers) before
     /// moving to the next lead. Every alt dial passes the same guardrails as a main number.
     public var tryAltNumbers = true
+    /// Your meeting booking page (Cal.com, Calendly...). Empty = the "Send booking link" box is off.
+    public var bookingLink = ""
+    /// Where the email opens: "gmail" (compose page in the browser) or "mail" (the Mail app).
+    public var bookingCompose = "gmail"
+    /// Optional: which signed-in Google account Gmail composes from (an address).
+    public var bookingGmailAccount = ""
+    /// Signs the email. Placeholders in subject/body: {name} {company} {link} {sender}.
+    public var bookingSender = ""
+    public var bookingSubject = "Link to book our call"
+    public var bookingBody = "Hi {name},\n\nThanks for your time on the call just now. Here's the link to pick a slot that suits you:\n{link}\n\n{sender}"
 
     public init() {}
 
@@ -68,6 +78,7 @@ public struct Config: Codable, Sendable {
         case dailyCap, gapSeconds, callingHours, callingDays, cooldownDays, coldSIM
         case dncPausePerDay, failurePauseCount, shortCallSeconds, notPlacedTimeoutSeconds
         case dialerListPath, dialerCaller, testNumbers, tryAltNumbers
+        case bookingLink, bookingCompose, bookingGmailAccount, bookingSender, bookingSubject, bookingBody
     }
 
     /// Every key is optional so a config written by an older build, or by hand
@@ -100,6 +111,12 @@ public struct Config: Codable, Sendable {
         dialerCaller = try c.decodeIfPresent(String.self, forKey: .dialerCaller) ?? dialerCaller
         testNumbers = try c.decodeIfPresent([String].self, forKey: .testNumbers) ?? testNumbers
         tryAltNumbers = try c.decodeIfPresent(Bool.self, forKey: .tryAltNumbers) ?? tryAltNumbers
+        bookingLink = try c.decodeIfPresent(String.self, forKey: .bookingLink) ?? bookingLink
+        bookingCompose = try c.decodeIfPresent(String.self, forKey: .bookingCompose) ?? bookingCompose
+        bookingGmailAccount = try c.decodeIfPresent(String.self, forKey: .bookingGmailAccount) ?? bookingGmailAccount
+        bookingSender = try c.decodeIfPresent(String.self, forKey: .bookingSender) ?? bookingSender
+        bookingSubject = try c.decodeIfPresent(String.self, forKey: .bookingSubject) ?? bookingSubject
+        bookingBody = try c.decodeIfPresent(String.self, forKey: .bookingBody) ?? bookingBody
     }
 
     /// Overridable for tests and for pointing the watcher at another app.

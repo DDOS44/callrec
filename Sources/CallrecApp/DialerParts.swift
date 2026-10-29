@@ -225,6 +225,8 @@ struct LeadHero: View {
     var calledBefore: Date?
     /// Click a number to dial it next; nil while a call is being placed or is on.
     var onChoose: ((String) -> Void)?
+    /// Previous / next pending lead; nil while a call is being placed or is on.
+    var onStep: ((Int) -> Void)?
 
     @State private var copied = false
 
@@ -233,6 +235,12 @@ struct LeadHero: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text(heading).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                if let onStep {
+                    Button { onStep(-1) } label: { Image(systemName: "chevron.left") }
+                        .buttonStyle(.borderless).help("Previous lead in the queue")
+                    Button { onStep(1) } label: { Image(systemName: "chevron.right") }
+                        .buttonStyle(.borderless).help("Next lead in the queue")
+                }
                 Spacer()
                 ConfidenceDot(confidence: lead.confidence, showWord: true)
             }
@@ -460,7 +468,12 @@ struct QueueSection: View {
                 ForEach(runner.queue) { item in
                     QueueRow(item: item, isCurrent: item.id == focusID,
                              altBadge: altsOn ? AltNumbers.queueBadge(altCount: AltNumbers.sequence(for: item.lead).count - 1) : nil)
+                        .contentShape(Rectangle())
+                        .onTapGesture { runner.callNext(item.id) }
                         .contextMenu {
+                            if item.status != .doNotCall, item.id != runner.session.currentLeadID {
+                                Button("Call this lead next") { runner.callNext(item.id) }
+                            }
                             if LeadStatus.afterMoveBack(current: item.status) != nil, item.id != runner.session.currentLeadID {
                                 Button("Move back to queue") { runner.moveBackToQueue(item.id) }
                             }
@@ -565,6 +578,7 @@ struct WrapUpSheet: View {
                     }
                 }
             }
+            if !runner.services.config.bookingLink.isEmpty { BookingBox(runner: runner, leadID: item.id) }
             VStack(alignment: .leading, spacing: 8) {
                 Text("Notes").font(.headline)
                 // One control draws both placeholder and caret, so they share the exact same inset.
@@ -638,4 +652,47 @@ private struct OutcomeChip: View {
         .buttonStyle(.plain)
         .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: [])
     }
+}
+
+// MARK: - Booking link
+
+/// Type the email they give on the call, click Send: a ready email with the booking link opens
+/// (Gmail or Mail), so the address can be checked before it goes. Shown on the call and in the wrap-up.
+struct BookingBox: View {
+    @ObservedObject var runner: DialRunner
+    let leadID: String
+    @State private var email = ""
+    @State private var message: String?
+
+    var body: some View {
+        let sent = runner.queue.first { $0.id == leadID }?.record.bookingSentAt
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Book a meeting", systemImage: "calendar.badge.plus").font(.headline)
+            HStack(spacing: 8) {
+                TextField("Their email", text: $email)
+                    .textFieldStyle(.roundedBorder)
+                    .textContentType(.emailAddress)
+                    .onSubmit(send)
+                    .onChange(of: email) { runner.setBookingEmail(email, for: leadID) }
+                Button(sent == nil ? "Send booking link" : "Send again", action: send)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(email.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            if let message {
+                Text(message).font(.caption).foregroundStyle(.orange)
+            } else if let sent {
+                Text("Email opened \(sent.formatted(date: .omitted, time: .shortened)). Hit Send in the compose window.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("Opens a ready email with your booking link. You check the address and hit Send.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .onAppear { email = runner.bookingEmail(for: leadID) }
+        .onChange(of: leadID) { email = runner.bookingEmail(for: leadID); message = nil }
+    }
+
+    private func send() { message = runner.sendBookingLink(to: email, for: leadID) }
 }
