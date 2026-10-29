@@ -31,8 +31,6 @@ public struct Config: Codable, Sendable {
     // DialPolicy; these are the defaults.
     /// Dial attempts per calendar day, any list.
     public var dailyCap = 30
-    /// Dial attempts per rolling 60 minutes.
-    public var hourlyCap = 10
     /// Random gap in seconds [min, max] between the end of wrap-up and the next dial.
     public var gapSeconds = [45, 120]
     /// Local "HH:mm" start and end (end is exclusive).
@@ -67,7 +65,7 @@ public struct Config: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case recordingsDir, modelFolder, vadModelPath, announcementPhrases, language, triggerBundleIDs, leadsCSV
         case minCallSeconds, stopAfterSilentSeconds, vocabulary, speakerLabels
-        case dailyCap, hourlyCap, gapSeconds, callingHours, callingDays, cooldownDays, coldSIM
+        case dailyCap, gapSeconds, callingHours, callingDays, cooldownDays, coldSIM
         case dncPausePerDay, failurePauseCount, shortCallSeconds, notPlacedTimeoutSeconds
         case dialerListPath, dialerCaller, testNumbers, tryAltNumbers
     }
@@ -89,7 +87,6 @@ public struct Config: Codable, Sendable {
         vocabulary = try c.decodeIfPresent([String].self, forKey: .vocabulary) ?? vocabulary
         speakerLabels = try c.decodeIfPresent(Bool.self, forKey: .speakerLabels) ?? speakerLabels
         dailyCap = try c.decodeIfPresent(Int.self, forKey: .dailyCap) ?? dailyCap
-        hourlyCap = try c.decodeIfPresent(Int.self, forKey: .hourlyCap) ?? hourlyCap
         gapSeconds = try c.decodeIfPresent([Int].self, forKey: .gapSeconds) ?? gapSeconds
         callingHours = try c.decodeIfPresent([String].self, forKey: .callingHours) ?? callingHours
         callingDays = try c.decodeIfPresent([Int].self, forKey: .callingDays) ?? callingDays

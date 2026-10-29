@@ -177,18 +177,10 @@ public final class DialRunner: ObservableObject {
         test > 0 ? "\(total) (\(test) test)" : "\(total)"
     }
 
-    public var realDialsLastHour: Int {
-        let now = services.now()
-        return dialLog.filter { $0.kind == .attempt && !rules.testKeys.contains($0.key) && $0.ts > now.addingTimeInterval(-3600) && $0.ts <= now }.count
-    }
 
     /// True for one of the user's own configured test numbers.
     public func isTestLead(_ lead: Lead) -> Bool { rules.testKeys.contains(lead.number) }
 
-    public var dialsLastHour: Int {
-        let now = services.now()
-        return dialLog.filter { $0.kind == .attempt && $0.ts > now.addingTimeInterval(-3600) && $0.ts <= now }.count
-    }
 
     private func refreshQueue() { queue = LeadQueue.build(services.leads, state: services.store.all) }
 
@@ -270,7 +262,7 @@ public final class DialRunner: ObservableObject {
         let capBlock = DialPolicy.capBlock(now: now, rules: rules, log: dialLog, calendar: services.calendar)
         let left = max(rules.dailyCap - dialsToday, 0)
         items.append(.init(id: "caps", title: "Dials left today",
-                           detail: capBlock?.message ?? "\(left) of \(rules.dailyCap) today, \(max(rules.hourlyCap - dialsLastHour, 0)) of \(rules.hourlyCap) this hour.",
+                           detail: capBlock?.message ?? "\(left) of \(rules.dailyCap) today.",
                            state: capBlock == nil ? .ok : .fail))
         items.append(.init(id: "history", title: "Call history",
                            detail: snapshot == nil ? "The background recorder did not answer. Is it running?" : "Reachable (cooldown and call checks).",

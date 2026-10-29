@@ -237,7 +237,7 @@ private func callLasting(_ s: inout DialSession, from now: Date, seconds: Int, g
     dialed(&s, at: t0)
     _ = callLasting(&s, from: t0, seconds: 1)
     let e = s.handle(.dialChecked(now: later(100), nextLeadID: lead,
-                                  decision: .blocked(.hourlyCapReached(cap: 10, freeAt: later(900))), numberCount: 3))
+                                  decision: .blocked(.dailyCapReached(cap: 30, resetsAt: later(900))), numberCount: 3))
     expect(e.isEmpty, "session.waits")
     equal(s.numberPlan, DialSession.NumberPlan(leadID: lead, count: 3, index: 1), "session.altStillQueued")
     guard case .countdown(let c) = s.phase else { Issue.record("session.countdown: \(s.phase)"); return }
@@ -302,15 +302,15 @@ private func attempt(_ key: String, at ts: Date) -> DialLogEntry {
     DialLogEntry.attempt(at: ts, list: "fake", leadID: lead, key: key)
 }
 
-@Test func eachAltAttemptCountsTowardTheDailyAndHourlyCaps() {
-    var rules = DialRules(); rules.dailyCap = 3; rules.hourlyCap = 3
+@Test func eachAltAttemptCountsTowardTheDailyCap() {
+    var rules = DialRules(); rules.dailyCap = 3
     let now = DialFixture.at(7, 14)
     let log = [attempt("9000000001", at: now.addingTimeInterval(-600)),
                attempt("9000000201", at: now.addingTimeInterval(-300)),
                attempt("9000000202", at: now.addingTimeInterval(-100))]
     let d = DialPolicy.evaluate(number: "9000000203", now: now, rules: rules, log: log, dnc: DNCList(), history: [:],
                                 session: DialFixture.session(), calendar: DialFixture.cal)
-    if case .blocked(.hourlyCapReached) = d {} else if case .blocked(.dailyCapReached) = d {} else { Issue.record("caps.blocked: \(d)") }
+    if case .blocked(.dailyCapReached) = d {} else { Issue.record("caps.blocked: \(d)") }
     // Two attempts leave room for the third.
     let ok = DialPolicy.evaluate(number: "9000000202", now: now, rules: rules, log: Array(log.prefix(2)), dnc: DNCList(),
                                  history: [:], session: DialFixture.session(), calendar: DialFixture.cal)

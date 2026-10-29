@@ -74,12 +74,11 @@ private typealias F = DialFixture
     equal(PhoneNumber.key("0900000"), nil, "key.tooShort")
 }
 
-// MARK: - Daily and hourly caps
+// MARK: - Daily cap
 
 @Test func dailyCapAtBoundary() {
     let day = (0..<29).map { F.attempt(F.at(7, 10, $0)) }
     equal(F.decide(now: F.at(7, 12), log: day), .allowed, "daily.29isFine")
-    // Hourly cap would trip first if these were all within an hour; space them out so only the daily cap is under test.
     let spaced = (0..<30).map { F.attempt(F.at(7, 10) .addingTimeInterval(Double($0) * 700)) }
     guard case .blocked(.dailyCapReached(let cap, let resets)) = F.decide(now: F.at(7, 17, 59), log: spaced) else {
         Issue.record("daily.30blocked: got \(F.decide(now: F.at(7, 17, 59), log: spaced))"); return
@@ -109,26 +108,12 @@ private typealias F = DialFixture
     equal(F.decide(now: F.at(8, 10), rules: rules, log: log, session: F.session(start: F.at(8, 9))), .allowed, "midnight.policyFree")
 }
 
-@Test func hourlyCapAtBoundaryAndRolling() {
+// 2026-10-29: the hourly cap (10 an hour) was removed on request. The daily cap and the
+// random 45-120 s gap still pace a session; a burst inside one hour must not block.
+@Test func noHourlyCapOnlyTheDailyCap() {
     let now = F.at(7, 12)
-    let nine = (0..<9).map { F.attempt(now.addingTimeInterval(-Double($0 + 1) * 60)) }
-    equal(F.decide(now: now, log: nine), .allowed, "hourly.9fine")
-    let ten = nine + [F.attempt(now.addingTimeInterval(-600))]
-    guard case .blocked(.hourlyCapReached(let cap, let free)) = F.decide(now: now, log: ten) else {
-        Issue.record("hourly.10blocked: got \(F.decide(now: now, log: ten))"); return
-    }
-    equal(cap, 10, "hourly.capValue")
-    // Oldest attempt is 10 min ago; the cap frees when it ages past 60 min: 50 min from now.
-    equal(free, now.addingTimeInterval(50 * 60), "hourly.freeAt")
-}
-
-@Test func hourlyWindowExcludesExactlySixtyMinutesAgo() {
-    let now = F.at(7, 12)
-    var rules = DialRules(); rules.hourlyCap = 1
-    let exactlyHourAgo = [F.attempt(now.addingTimeInterval(-3600))]
-    equal(F.decide(now: now, rules: rules, log: exactlyHourAgo), .allowed, "hourly.exactly60IsOut")
-    let justInside = [F.attempt(now.addingTimeInterval(-3599))]
-    expect(F.decide(now: now, rules: rules, log: justInside) != .allowed, "hourly.59m59sIsIn")
+    let burst = (0..<15).map { F.attempt(now.addingTimeInterval(-Double($0 + 1) * 120)) }
+    equal(F.decide(now: now, log: burst), .allowed, "noHourly.15InAnHourAllowed")
 }
 
 // MARK: - Calling hours and days
@@ -370,7 +355,6 @@ private typealias F = DialFixture
 @Test func configDialerDefaultsMatchTheSpec() {
     let c = Config()
     equal(c.dailyCap, 30, "cfg.dailyCap")
-    equal(c.hourlyCap, 10, "cfg.hourlyCap")
     equal(c.gapSeconds, [45, 120], "cfg.gap")
     equal(c.callingHours, ["10:00", "18:30"], "cfg.hours")
     equal(c.callingDays, [1, 2, 3, 4, 5, 6], "cfg.days")
@@ -385,7 +369,9 @@ private typealias F = DialFixture
 @Test func configDialerKeysAreTolerantAndBadValuesFallBack() throws {
     let partial = try JSONDecoder().decode(Config.self, from: Data(#"{"dailyCap": 12, "language": "en"}"#.utf8))
     equal(partial.dailyCap, 12, "cfg.partialKeeps")
-    equal(partial.hourlyCap, 10, "cfg.partialDefaults")
+    equal(partial.dialRules, { var r = DialRules(); r.dailyCap = 12; return r }(), "cfg.partialDefaults")
+    let old = try JSONDecoder().decode(Config.self, from: Data(#"{"hourlyCap": 10, "dailyCap": 30}"#.utf8))
+    equal(old.dailyCap, 30, "cfg.oldHourlyKeyIgnored")
     let bad = try JSONDecoder().decode(Config.self, from: Data(
         #"{"gapSeconds": [200, 10], "callingHours": ["18:30", "10:00"], "callingDays": [9, 0]}"#.utf8))
     let r = bad.dialRules

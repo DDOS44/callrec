@@ -5,7 +5,6 @@ import Foundation
 /// a typo must never silently widen a guardrail.
 public struct DialRules: Equatable, Sendable {
     public var dailyCap = 30
-    public var hourlyCap = 10
     public var gapMin: TimeInterval = 45
     public var gapMax: TimeInterval = 120
     /// Seconds after local midnight; end is exclusive.
@@ -27,7 +26,6 @@ public struct DialRules: Equatable, Sendable {
     public init(config: Config) {
         let d = DialRules()
         dailyCap = max(config.dailyCap, 0)
-        hourlyCap = max(config.hourlyCap, 0)
         if config.gapSeconds.count == 2, config.gapSeconds[0] >= 0, config.gapSeconds[0] <= config.gapSeconds[1] {
             gapMin = TimeInterval(config.gapSeconds[0]); gapMax = TimeInterval(config.gapSeconds[1])
         } else {

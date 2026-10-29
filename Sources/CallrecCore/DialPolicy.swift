@@ -11,7 +11,6 @@ public enum DialBlock: Equatable, Sendable {
     /// Outside calling hours or days; `opensAt` is the next opening (nil if no day is allowed).
     case outsideCallingHours(opensAt: Date?)
     case dailyCapReached(cap: Int, resetsAt: Date)
-    case hourlyCapReached(cap: Int, freeAt: Date)
     /// The minimum gap since wrap-up has not passed.
     case gapNotElapsed(until: Date)
     /// No SIM column on this Mac and the manual "default voice line is the cold SIM" tick is missing.
@@ -26,7 +25,6 @@ public enum DialBlock: Equatable, Sendable {
         case .outsideCallingHours(let opens):
             return opens.map { "Outside calling hours. Opens \(Self.describe($0))." } ?? "No calling day is enabled."
         case .dailyCapReached(let cap, let resets): return "Daily cap of \(cap) dials reached. Resets \(Self.describe(resets))."
-        case .hourlyCapReached(let cap, let free): return "Hourly cap of \(cap) dials reached. Free \(Self.describe(free))."
         case .gapNotElapsed(let until): return "Minimum gap between calls not over. Free \(Self.describe(until))."
         case .coldSIMNotConfirmed: return "Confirm the cold SIM is the default voice line."
         }
@@ -35,7 +33,7 @@ public enum DialBlock: Equatable, Sendable {
     /// When this block clears by itself, if it does.
     public var clearsAt: Date? {
         switch self {
-        case .cooldown(let d), .dailyCapReached(_, let d), .hourlyCapReached(_, let d), .gapNotElapsed(let d): return d
+        case .cooldown(let d), .dailyCapReached(_, let d), .gapNotElapsed(let d): return d
         case .outsideCallingHours(let d): return d
         case .callActive, .invalidNumber, .doNotCall, .coldSIMNotConfirmed: return nil
         }
@@ -274,15 +272,6 @@ public enum DialPolicy {
         if today.count >= rules.dailyCap {
             let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86_400)
             return .dailyCapReached(cap: rules.dailyCap, resetsAt: tomorrow)
-        }
-        // Rolling hour: an attempt exactly 60 minutes ago no longer counts.
-        let windowStart = now.addingTimeInterval(-3600)
-        let recent = attempts.map(\.ts).filter { $0 > windowStart && $0 <= now }.sorted()
-        if recent.count >= rules.hourlyCap {
-            // Free when enough old attempts have aged out to get back under the cap.
-            let freeing = recent.count - rules.hourlyCap
-            let free = (recent.indices.contains(freeing) ? recent[freeing] : now).addingTimeInterval(3600)
-            return .hourlyCapReached(cap: rules.hourlyCap, freeAt: free)
         }
         return nil
     }
