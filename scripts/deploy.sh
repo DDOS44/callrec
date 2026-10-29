@@ -20,5 +20,12 @@ fi
 codesign -d -r- "$HOME/.callrec/bin/callrec" 2>&1 | grep designated
 
 launchctl kickstart -k "gui/$(id -u)/com.blaxify.callrec"
-sleep 3
-"$HOME/.callrec/bin/callrec" status | head -1
+# The first exec right after the binary is swapped can be killed by macOS ("Launch Constraint
+# Violation"); launchd relaunches it. Wait for it to be up instead of judging after one look.
+for _ in $(seq 1 15); do
+  sleep 1
+  line=$("$HOME/.callrec/bin/callrec" status | head -1)
+  case "$line" in NOT\ RUNNING*) continue ;; *) echo "$line"; exit 0 ;; esac
+done
+echo "$line"
+exit 1
