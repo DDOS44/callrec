@@ -77,6 +77,7 @@ private struct ListSummary: View {
             row("No answer", "phone.down.fill", .secondary, "\(counts[.noAnswer] ?? 0)")
             row("Do not call", "nosign", .red, "\(counts[.doNotCall] ?? 0)")
             row("Skipped", "forward.fill", .orange, "\(counts[.skipped] ?? 0)")
+            row("Picked up", "person.wave.2.fill", .blue, runner.pickupRate.text)
             Divider()
             row("Dials today", "phone.arrow.up.right", .secondary,
                 DialRunner.dialsTodayText(total: runner.dialsToday, test: runner.testDialsToday))

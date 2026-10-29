@@ -315,6 +315,11 @@ public final class DialRunner: ObservableObject {
         return dialLog.filter { $0.kind == .attempt && !rules.testKeys.contains($0.key) && services.calendar.isDate($0.ts, inSameDayAs: now) }.count
     }
 
+    /// Dial-to-pick-up ratio for the loaded list (see PickupRate).
+    public var pickupRate: PickupRate.Value {
+        PickupRate.compute(log: dialLog, list: services.listName, records: services.store.all, testKeys: rules.testKeys)
+    }
+
     /// Today's dials to the user's own test numbers (they never count against the caps).
     public var testDialsToday: Int { dialsToday - realDialsToday }
 
