@@ -20,6 +20,7 @@ struct CallDetailView: View {
     /// Auto-scroll to the playing line. Turns off as soon as you scroll yourself
     /// (it used to snap back 4x a second and you couldn't scroll up while playing).
     @State private var followAudio = true
+    @State private var copiedTranscript = false
 
     var body: some View {
         ScrollView {
@@ -131,6 +132,11 @@ struct CallDetailView: View {
                 SectionLabel("Transcript")
                 Spacer()
                 if !visibleTranscript.isEmpty {
+                    Button { copyTranscript() } label: {
+                        Label(copiedTranscript ? "Copied" : "Copy", systemImage: copiedTranscript ? "checkmark" : "doc.on.doc")
+                    }
+                    .controlSize(.small)
+                    .help("Copy the whole transcript (the lines shown) to the clipboard")
                     Toggle(isOn: $followAudio) {
                         Label("Follow audio", systemImage: "arrow.down.to.line")
                     }
@@ -165,6 +171,15 @@ struct CallDetailView: View {
                 }
             }
         }
+    }
+
+    private func copyTranscript() {
+        let header = [call.title, "\(call.day) \(call.time)", call.durationLabel].joined(separator: " · ")
+        let text = TranscriptCopy.text(header: header, lines: visibleTranscript.map { (start: $0.start, speaker: $0.speaker, text: $0.text) })
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copiedTranscript = true
+        Task { try? await Task.sleep(for: .seconds(2)); copiedTranscript = false }   // swiftlint:disable:this no_try_optional
     }
 
     private var visibleTranscript: [TranscriptLine] {
