@@ -115,6 +115,14 @@ final class DialerModel: ObservableObject {
                 try c.save()
             })
         services.openURL = { NSWorkspace.shared.open($0) }
+        if config.calcomEventTypeId > 0 {
+            if let key = CalCom.apiKeyFromKeychain(), !key.isEmpty {
+                services.calcom = CalCom(apiKey: key, eventTypeId: config.calcomEventTypeId,
+                                         timeZone: TimeZone(identifier: config.calcomTimeZone) ?? .current)
+            } else {
+                logError("calcom: calcomEventTypeId is set but no API key is in the Keychain (service \(CalCom.keychainService))")
+            }
+        }
         return services
     }
 }

@@ -30,6 +30,9 @@ public final class MicRecorder: @unchecked Sendable {
     private var defaultInputListener: AudioObjectPropertyListenerBlock?
     private var reconfigurations = 0
     private var loggedChannels = false
+    /// Reattach and stop run here one at a time: a device-change reattach must never run while
+    /// stop() is tearing the engine down (both used to touch the engine from different threads).
+    private let engineQueue = DispatchQueue(label: "callrec.mic.engine")
 
     public init(url: URL) throws {
         self.url = url
@@ -106,6 +109,10 @@ public final class MicRecorder: @unchecked Sendable {
     }
 
     private func reattach(reason: String) {
+        engineQueue.async { [weak self] in self?.reattachNow(reason: reason) }
+    }
+
+    private func reattachNow(reason: String) {
         lock.lock(); let live = running; lock.unlock()
         guard live else { return }
         reconfigurations += 1
@@ -217,8 +224,12 @@ public final class MicRecorder: @unchecked Sendable {
             AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, nil, listener)
         }
         defaultInputListener = nil
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        engineQueue.sync {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
+        // Notifications already in flight for this engine may still arrive: keep it alive a while.
+        DelayedRelease.shared.keep(engine, for: 30)
 
         lock.lock()
         if let file, let target { padSilence(upTo: Clock.nowHost, file: file, format: target) }

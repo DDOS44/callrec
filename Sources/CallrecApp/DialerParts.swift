@@ -558,7 +558,8 @@ struct WrapUpSheet: View {
 
     init(runner: DialRunner, item: QueueItem, wrap: DialSession.WrapUp) {
         self.runner = runner; self.item = item; self.wrap = wrap
-        _outcome = State(initialValue: wrap.connected ? .none : .noConnect)
+        let bookedThisCall = item.record.bookingUid != nil && (item.record.bookingSentAt ?? .distantPast) > Date().addingTimeInterval(-3600)
+        _outcome = State(initialValue: bookedThisCall ? .booked : (wrap.connected ? .none : .noConnect))
     }
 
     var body: some View {
@@ -578,7 +579,7 @@ struct WrapUpSheet: View {
                     }
                 }
             }
-            if !runner.services.config.bookingLink.isEmpty { BookingBox(runner: runner, leadID: item.id) }
+            if runner.canBook || !runner.services.config.bookingLink.isEmpty { BookingBox(runner: runner, leadID: item.id) }
             VStack(alignment: .leading, spacing: 8) {
                 Text("Notes").font(.headline)
                 // One control draws both placeholder and caret, so they share the exact same inset.
@@ -654,45 +655,136 @@ private struct OutcomeChip: View {
     }
 }
 
-// MARK: - Booking link
+// MARK: - Booking
 
-/// Type the email they give on the call, click Send: a ready email with the booking link opens
-/// (Gmail or Mail), so the address can be checked before it goes. Shown on the call and in the wrap-up.
+/// Book the meeting on the call: their name and email, a day, one of your free Cal.com slots, Book.
+/// Cal.com creates the event and emails them the invite with the join link. Without Cal.com set up,
+/// it falls back to opening an email with the booking link. Shown on the call and in the wrap-up.
 struct BookingBox: View {
     @ObservedObject var runner: DialRunner
     let leadID: String
+    @State private var name = ""
     @State private var email = ""
+    @State private var day = Calendar.current.startOfDay(for: Date())
+    @State private var slots: [Date] = []
+    @State private var loading = false
+    @State private var picked: Date?
+    @State private var busy = false
     @State private var message: String?
 
+    private var record: LeadRecord? { runner.queue.first { $0.id == leadID }?.record }
+
     var body: some View {
-        let sent = runner.queue.first { $0.id == leadID }?.record.bookingSentAt
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Label("Book a meeting", systemImage: "calendar.badge.plus").font(.headline)
+            if let when = record?.bookedFor, record?.bookingUid != nil {
+                Label("Booked for \(Self.long.string(from: when)). Cal.com emailed the invite to \(record?.email ?? "them"). Ask if it arrived.",
+                      systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green).font(.callout.weight(.medium)).fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 8) {
-                TextField("Their email", text: $email)
-                    .textFieldStyle(.roundedBorder)
-                    .textContentType(.emailAddress)
-                    .onSubmit(send)
+                TextField("Their name", text: $name).textFieldStyle(.roundedBorder).frame(maxWidth: 180)
+                TextField("Their email", text: $email).textFieldStyle(.roundedBorder).textContentType(.emailAddress)
                     .onChange(of: email) { runner.setBookingEmail(email, for: leadID) }
-                Button(sent == nil ? "Send booking link" : "Send again", action: send)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(email.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            if let message {
-                Text(message).font(.caption).foregroundStyle(.orange)
-            } else if let sent {
-                Text("Email opened \(sent.formatted(date: .omitted, time: .shortened)). Hit Send in the compose window.")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("Opens a ready email with your booking link. You check the address and hit Send.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            if runner.canBook { slotPicker } else { linkOnly }
+            if let message { Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
         }
         .padding(12)
         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-        .onAppear { email = runner.bookingEmail(for: leadID) }
-        .onChange(of: leadID) { email = runner.bookingEmail(for: leadID); message = nil }
+        .onAppear(perform: reset)
+        .onChange(of: leadID) { reset() }
+        .task(id: day) { await load() }
     }
 
-    private func send() { message = runner.sendBookingLink(to: email, for: leadID) }
+    private var slotPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Self.nextDays(), id: \.self) { d in
+                        Button { day = d; picked = nil } label: {
+                            Text(Self.dayLabel(d)).font(.caption.weight(.medium))
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .background(d == day ? Color.accentColor : Color.secondary.opacity(0.15), in: Capsule())
+                                .foregroundStyle(d == day ? Color.white : Color.primary)
+                        }.buttonStyle(.plain)
+                    }
+                }
+            }
+            if loading {
+                ProgressView().controlSize(.small)
+            } else if slots.isEmpty {
+                Text("No free slots this day.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 6)], alignment: .leading, spacing: 6) {
+                    ForEach(slots, id: \.self) { s in
+                        Button { picked = s } label: {
+                            Text(Self.time.string(from: s)).font(.callout.monospacedDigit())
+                                .frame(maxWidth: .infinity).padding(.vertical, 5)
+                                .background(picked == s ? Color.accentColor : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                                .foregroundStyle(picked == s ? Color.white : Color.primary)
+                        }.buttonStyle(.plain)
+                    }
+                }
+            }
+            HStack {
+                Button {
+                    guard let picked else { return }
+                    busy = true; message = nil
+                    Task {
+                        message = await runner.bookMeeting(leadID: leadID, start: picked, name: name, email: email)
+                        busy = false
+                        if message == nil { await load() }
+                    }
+                } label: {
+                    Text(picked.map { "Book \(Self.long.string(from: $0))" } ?? "Pick a time")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(picked == nil || busy || email.isEmpty || name.isEmpty)
+                if busy { ProgressView().controlSize(.small) }
+                Spacer()
+                if !runner.services.config.bookingLink.isEmpty {
+                    Button("Email the link instead") { message = runner.sendBookingLink(to: email, for: leadID) }
+                        .buttonStyle(.borderless).font(.caption)
+                }
+            }
+        }
+    }
+
+    private var linkOnly: some View {
+        HStack {
+            Button("Send booking link") { message = runner.sendBookingLink(to: email, for: leadID) }
+                .buttonStyle(.borderedProminent).disabled(email.isEmpty)
+            Text("Opens a ready email with your booking link.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func reset() {
+        email = runner.bookingEmail(for: leadID)
+        let owner = runner.queue.first { $0.id == leadID }?.lead.owner ?? ""
+        name = owner.split(separator: "(").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        message = nil; picked = nil
+    }
+
+    private func load() async {
+        guard runner.canBook else { return }
+        loading = true
+        switch await runner.freeSlots(on: day) {
+        case .success(let s): slots = s
+        case .failure(let f): slots = []; message = f.message
+        }
+        loading = false
+    }
+
+    private static func nextDays() -> [Date] {
+        let today = Calendar.current.startOfDay(for: Date())
+        return (0..<10).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: today) }
+    }
+    private static func dayLabel(_ d: Date) -> String {
+        if Calendar.current.isDateInToday(d) { return "Today" }
+        if Calendar.current.isDateInTomorrow(d) { return "Tomorrow" }
+        let f = DateFormatter(); f.dateFormat = "EEE d"; return f.string(from: d)
+    }
+    private static let time: DateFormatter = { let f = DateFormatter(); f.dateFormat = "h:mm a"; return f }()
+    private static let long: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE d MMM, h:mm a"; return f }()
 }

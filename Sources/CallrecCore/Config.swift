@@ -61,6 +61,10 @@ public struct Config: Codable, Sendable {
     public var tryAltNumbers = true
     /// Your meeting booking page (Cal.com, Calendly...). Empty = the "Send booking link" box is off.
     public var bookingLink = ""
+    /// Cal.com event type to book on the call (0 = off). The API key is read from the Keychain.
+    public var calcomEventTypeId = 0
+    /// Time zone the slots are shown and booked in.
+    public var calcomTimeZone = "Asia/Kolkata"
     /// Where the email opens: "gmail" (compose page in the browser) or "mail" (the Mail app).
     public var bookingCompose = "gmail"
     /// Optional: which signed-in Google account Gmail composes from (an address).
@@ -78,6 +82,7 @@ public struct Config: Codable, Sendable {
         case dailyCap, gapSeconds, callingHours, callingDays, cooldownDays, coldSIM
         case dncPausePerDay, failurePauseCount, shortCallSeconds, notPlacedTimeoutSeconds
         case dialerListPath, dialerCaller, testNumbers, tryAltNumbers
+        case calcomEventTypeId, calcomTimeZone
         case bookingLink, bookingCompose, bookingGmailAccount, bookingSender, bookingSubject, bookingBody
     }
 
@@ -112,6 +117,8 @@ public struct Config: Codable, Sendable {
         testNumbers = try c.decodeIfPresent([String].self, forKey: .testNumbers) ?? testNumbers
         tryAltNumbers = try c.decodeIfPresent(Bool.self, forKey: .tryAltNumbers) ?? tryAltNumbers
         bookingLink = try c.decodeIfPresent(String.self, forKey: .bookingLink) ?? bookingLink
+        calcomEventTypeId = try c.decodeIfPresent(Int.self, forKey: .calcomEventTypeId) ?? calcomEventTypeId
+        calcomTimeZone = try c.decodeIfPresent(String.self, forKey: .calcomTimeZone) ?? calcomTimeZone
         bookingCompose = try c.decodeIfPresent(String.self, forKey: .bookingCompose) ?? bookingCompose
         bookingGmailAccount = try c.decodeIfPresent(String.self, forKey: .bookingGmailAccount) ?? bookingGmailAccount
         bookingSender = try c.decodeIfPresent(String.self, forKey: .bookingSender) ?? bookingSender

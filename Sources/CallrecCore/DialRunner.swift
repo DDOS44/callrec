@@ -41,6 +41,8 @@ public final class DialRunner: ObservableObject {
         public var autoTick: Bool
         /// Opens a URL (the booking email's compose window). The app passes NSWorkspace; tests capture it.
         public var openURL: (URL) -> Bool = { _ in false }
+        /// Books meetings on the call; nil when Cal.com is not set up (no event type or no key).
+        public var calcom: CalCom?
 
         public init(dialer: Dialer, config: Config, listName: String, leads: LeadImport, store: LeadStateStore,
                     dialLogURL: URL = DialerPaths.dialLog, dncURL: URL = DialerPaths.dnc, calendar: Calendar = .current,
@@ -243,6 +245,38 @@ public final class DialRunner: ObservableObject {
         update(leadID) { $0.email = to; $0.bookingSentAt = services.now() }
         objectWillChange.send()
         return nil
+    }
+
+    /// True when meetings can be booked on the call (Cal.com event type + API key present).
+    public var canBook: Bool { services.calcom != nil }
+
+    /// Free slots on `day` for the booking box. A failure comes back as a message to show.
+    public func freeSlots(on day: Date) async -> Result<[Date], CalCom.Failure> {
+        guard let cal = services.calcom else { return .failure(.init(message: "Cal.com is not set up.")) }
+        do { return .success(try await cal.slots(on: day).filter { $0 > services.now() }) } catch {
+            return .failure(.init(message: error.localizedDescription))
+        }
+    }
+
+    /// Books `start` for the lead through Cal.com, which emails them the invite and join link.
+    /// Returns a message when it could not; nil when booked (saved on the lead, noted in the wrap-up).
+    public func bookMeeting(leadID: String, start: Date, name: String, email: String) async -> String? {
+        guard let cal = services.calcom else { return "Cal.com is not set up." }
+        let to = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard BookingEmail.isValid(to) else { return "That email doesn't look right. Check it with them." }
+        let who = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !who.isEmpty else { return "Add their name: it goes on the invite." }
+        do {
+            let b = try await cal.book(start: start, name: who, email: to)
+            emailDrafts[leadID] = to
+            update(leadID) { $0.email = to; $0.bookingUid = b.uid; $0.bookedFor = b.start; $0.bookingSentAt = services.now() }
+            log("calcom: booked \(b.uid) for lead \(leadID)")
+            objectWillChange.send()
+            return nil
+        } catch {
+            logError("calcom: booking failed for lead \(leadID): \(error.localizedDescription)")
+            return error.localizedDescription
+        }
     }
 
     /// Countdown button: give up on the lead's remaining numbers and move to the next lead.
@@ -633,7 +667,12 @@ public final class DialRunner: ObservableObject {
         // A booking link sent during this call goes into the notes, so the call's file says so too.
         if let rec = queue.first(where: { $0.id == id })?.record, let sent = rec.bookingSentAt, let email = rec.email,
            sent >= (dialedAt ?? .distantPast), !notes.contains(email) {
-            notes += (notes.isEmpty ? "" : "\n") + "Booking link sent to \(email)"
+            if let when = rec.bookedFor {
+                let f = DateFormatter(); f.dateFormat = "EEE d MMM, h:mm a"; f.timeZone = services.calcom?.timeZone ?? .current
+                notes += (notes.isEmpty ? "" : "\n") + "Meeting booked for \(f.string(from: when)), invite sent to \(email)"
+            } else {
+                notes += (notes.isEmpty ? "" : "\n") + "Booking link sent to \(email)"
+            }
         }
         update(id) {
             $0.outcome = outcome; $0.notes = notes

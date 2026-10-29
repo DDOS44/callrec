@@ -46,10 +46,13 @@ public struct LeadRecord: Codable, Equatable, Sendable {
     /// Email given on the call, and when the booking link was opened for it.
     public var email: String?
     public var bookingSentAt: Date?
+    /// A meeting booked on the call through Cal.com: its id and start time.
+    public var bookingUid: String?
+    public var bookedFor: Date?
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case status, attempts, lastDialedAt, outcome, notes, callID, updatedAt, email, bookingSentAt }
+    private enum CodingKeys: String, CodingKey { case status, attempts, lastDialedAt, outcome, notes, callID, updatedAt, email, bookingSentAt, bookingUid, bookedFor }
 
     public init(from decoder: Decoder) throws {
         self.init()
@@ -63,6 +66,8 @@ public struct LeadRecord: Codable, Equatable, Sendable {
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
         email = try c.decodeIfPresent(String.self, forKey: .email)
         bookingSentAt = try c.decodeIfPresent(Date.self, forKey: .bookingSentAt)
+        bookingUid = try c.decodeIfPresent(String.self, forKey: .bookingUid)
+        bookedFor = try c.decodeIfPresent(Date.self, forKey: .bookedFor)
     }
 }
 

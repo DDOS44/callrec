@@ -20,7 +20,7 @@ private struct Rig {
     let runner: DialRunner
 
     init(logURL: URL? = nil, snapshot: HistorySnapshot? = nil, recordings: [(day: String, file: String)] = [],
-         booking: String = "", open: @escaping (URL) -> Bool = { _ in false }) throws {
+         booking: String = "", open: @escaping (URL) -> Bool = { _ in false }, calcom: CalCom? = nil) throws {
         if let snapshot { box.snapshot = snapshot }
         dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("callrec-runner-\(UUID())")
         try Paths.ensureDir(dir)
@@ -52,6 +52,7 @@ private struct Rig {
             },
             saveColdSIM: { _ in }, autoTick: false)
         services.openURL = open
+        services.calcom = calcom
         runner = DialRunner(services)
     }
 
@@ -495,4 +496,43 @@ private struct Rig {
     defer { Fs.remove(rig.dir) }
     let msg = rig.runner.sendBookingLink(to: "rahul@fakeagency.in", for: "9000000001") ?? ""
     expect(msg.contains("bookingLink"), "nolink.message: \(msg)")
+}
+
+// Book on the call: free slots -> Book -> Cal.com sends the invite. Saved on the lead and in the notes.
+
+private func fakeCal(status: Int, body: String) -> CalCom {
+    CalCom(apiKey: "k", eventTypeId: 42, timeZone: DialFixture.ist) { req in
+        (Data(body.utf8), HTTPURLResponse(url: req.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+    }
+}
+
+@MainActor @Test func bookingOnTheCallIsSavedAndNoted() async throws {
+    let cal = fakeCal(status: 201, body: #"{"status":"success","data":{"uid":"bk_9","start":"2026-10-30T04:00:00.000Z","location":"https://meet.google.com/x"}}"#)
+    let rig = try Rig(calcom: cal)
+    defer { Fs.remove(rig.dir) }
+    let r = rig.runner
+    expect(r.canBook, "cal.canBook")
+    r.start(); await rig.settle(); r.confirmManualSIM(true); r.passPreflight()
+    r.tick(); rig.box.recording = true; rig.box.since = rig.box.now; rig.advance(2); r.tick()
+    equal(await r.bookMeeting(leadID: "9000000001", start: DialFixture.at(30, 9, 30), name: "Rahul", email: "bad") ?? "",
+          "That email doesn't look right. Check it with them.", "cal.invalidEmail")
+    expect(await r.bookMeeting(leadID: "9000000001", start: DialFixture.at(30, 9, 30), name: "Rahul", email: "rahul@fakeagency.in") == nil,
+           "cal.booked")
+    let rec = r.queue.first { $0.id == "9000000001" }?.record
+    equal(rec?.bookingUid ?? "", "bk_9", "cal.uid")
+    equal(rec?.bookedFor, DialFixture.at(30, 9, 30), "cal.when")
+    equal(rec?.email ?? "", "rahul@fakeagency.in", "cal.email")
+    rig.advance(60); rig.box.recording = false; r.tick(); await rig.settle()
+    r.saveWrapUp(outcome: "booked", notes: "", doNotCall: false)
+    let notes = r.queue.first { $0.id == "9000000001" }?.record.notes ?? ""
+    expect(notes.contains("Meeting booked for") && notes.contains("rahul@fakeagency.in"), "cal.notes: \(notes)")
+}
+
+@MainActor @Test func aFailedBookingSavesNothingAndSaysWhy() async throws {
+    let cal = fakeCal(status: 400, body: #"{"status":"error","error":{"message":"slot taken"}}"#)
+    let rig = try Rig(calcom: cal)
+    defer { Fs.remove(rig.dir) }
+    let msg = await rig.runner.bookMeeting(leadID: "9000000001", start: DialFixture.at(30, 9), name: "A", email: "a@fake.in") ?? ""
+    equal(msg, "Cal.com: slot taken", "calFail.message")
+    expect(rig.runner.queue.first { $0.id == "9000000001" }?.record.bookingUid == nil, "calFail.nothingSaved")
 }
